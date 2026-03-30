@@ -96,7 +96,7 @@ class PSVM(ThemedTk):
         menubar.add_cascade(label="Plot", menu=plotting_menu)
         plotting_menu.add_command(label="Plot dv/v", command=self.plot_dvv)
         #plotting_menu.add_command(label="Plot spatially averaged dv/v", command=self.spatial_average)
-        plotting_menu.add_command(label="Plot mean dv/v", command=self.plot_dvv_mean)
+        #plotting_menu.add_command(label="Plot mean dv/v", command=self.plot_dvv_mean)
 
         options_menu = tk.Menu(menubar, tearoff=False)
         menubar.add_cascade(label="Options", menu=options_menu)
@@ -118,7 +118,7 @@ class PSVM(ThemedTk):
         self.stack_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_mergeResults.gif")))
         self.mwcs_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_fit.gif")))
         self.plot_dvv_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "grafico.gif")))
-        self.spatAverage_dvv_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "spatial_average_ico.png")))
+        #self.spatAverage_dvv_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "spatial_average_ico.png")))
         self.options_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "opt.gif")))
 
         self.create_project_button = ttk.Button(toolbar_frame, image=self.create_ico_img, command=self.create_project)
@@ -142,8 +142,8 @@ class PSVM(ThemedTk):
         self.plot_dvv_button = ttk.Button(toolbar_frame, image=self.plot_dvv_ico_img, command=lambda: Thread(target=self.plot_dvv).start())
         self.plot_dvv_button.pack(side="left")
 
-        self.plot_spatial_average_dvv_button = ttk.Button(toolbar_frame, image=self.spatAverage_dvv_ico_img, command=lambda: Thread(target=self.spatial_average).start())
-        self.plot_spatial_average_dvv_button.pack(side="left")
+        #self.plot_spatial_average_dvv_button = ttk.Button(toolbar_frame, image=self.spatAverage_dvv_ico_img, command=lambda: Thread(target=self.spatial_average).start())
+        #self.plot_spatial_average_dvv_button.pack(side="left")
 
         self.options_button = ttk.Button(toolbar_frame, image=self.options_ico_img, command=self.options)
         self.options_button.pack(side="left")
@@ -226,7 +226,7 @@ class PSVM(ThemedTk):
         #self.spatial_average_gap_limit = self.plot_dvv_gap_limit
 
     def on_closing(self):
-        if tk.messagebox.askyesno("SANBA - PSVM", "Exit?"):
+        if tk.messagebox.askyesno("SANBA", "Exit?"):
             plt.close("all")
             self.destroy()
 
@@ -661,11 +661,11 @@ class PSVM(ThemedTk):
         import shutil
         
         if self.current_project_path == None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No project path detected. Create or load a project to continue.")
+            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
             return
             
         if self.pairs == None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No pair(s) of station(s) detected. Select stations to continue.")
+            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
             return
 
         out_dir = os.path.join(self.current_project_path, "out")
@@ -700,11 +700,11 @@ class PSVM(ThemedTk):
     def run_all(self):
         
         if self.current_project_path == None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No project path detected. Create or load a project to continue.")
+            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
             return
             
         if self.pairs == None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No pair(s) of station(s) detected. Select stations to continue.")
+            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
             return
 
         self.correlation()
@@ -717,11 +717,11 @@ class PSVM(ThemedTk):
         import shutil
         
         if self.current_project_path == None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No project path detected. Create or load a project to continue.")
+            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
             return
             
         if self.pairs == None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No pair(s) of station(s) detected. Select stations to continue.")
+            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
             return
 
         #f1,f2,stack_days,canal,metodo_correlacao,referencia,fazer_analise_cross_component
@@ -836,24 +836,24 @@ class PSVM(ThemedTk):
                     self.spatial_average_gap_limit = eval(settings_df.loc['spatial_average_gap_limit'].values[0])
 
                     self.status_var.set("All new parameters were loaded.")
-                    tk.messagebox.showinfo("SANBA - PSVM", "Parameters loaded successfully.")
+                    tk.messagebox.showinfo("SANBA", "Parameters loaded successfully.")
 
                     if os.path.exists(self.current_project_path+"/data/instrument_response") and os.path.exists(self.current_project_path+"/out/corr") and os.path.exists(self.current_project_path+"/out/stack") and os.path.exists(self.current_project_path+"/out/dvv") and os.path.exists(self.current_project_path+"/out/average_dvv"):
                         pass
                     else:
                         self.current_project_path = None
-                        tk.messagebox.showwarning("SANBA - PSVM", "The pointed path is not a valid project. Create or load a project path to continue.")
+                        tk.messagebox.showwarning("SANBA", "The pointed path is not a valid project. Create or load a project path to continue.")
 
-                        if tk.messagebox.askyesno("SANBA - PSVM", "Create a new project?"):
+                        if tk.messagebox.askyesno("SANBA", "Create a new project?"):
                             self.create_project()
                         else:
-                            if tk.messagebox.askyesno("SANBA - PSVM", "Load an existing project?"):
+                            if tk.messagebox.askyesno("SANBA", "Load an existing project?"):
                                 self.load_project()
 
                     self.top_options.destroy()
                     
                 except Exception as e:
-                    tk.messagebox.showwarning("SANBA - PSVM", "Error while reading parameters in the selected file. Please, check the content of the file.")
+                    tk.messagebox.showwarning("SANBA", "Error while reading parameters in the selected file. Please, check the content of the file.")
                     return'''
             
     '''def settings_spatial_average(self):
@@ -888,13 +888,13 @@ class PSVM(ThemedTk):
                 self.spatial_average_gap_limit = float(entry_spatial_average_gap.get())
 
                 self.status_var.set("New spatial average parameters saved.")
-                tk.messagebox.showinfo("SANBA - PSVM", "Parameters saved successfully.")
+                tk.messagebox.showinfo("SANBA", "Parameters saved successfully.")
 
                 self.top_spatial_average_options.destroy()
 
             except Exception as e:
                 print(e)
-                tk.messagebox.showwarning("SANBA - PSVM", "Invalid inputs: please make sure to enter valid values.")
+                tk.messagebox.showwarning("SANBA", "Invalid inputs: please make sure to enter valid values.")
                 self.top_spatial_average_options.tkraise()
                 return
         
@@ -930,12 +930,12 @@ class PSVM(ThemedTk):
                 self.mwcs_plot = plot_mwcs_var.get()
 
                 self.status_var.set("New plotting parameters saved.")
-                tk.messagebox.showinfo("SANBA - PSVM", "Parameters saved successfully.")
+                tk.messagebox.showinfo("SANBA", "Parameters saved successfully.")
 
                 self.top_ploting_options.destroy()
 
             except ValueError:
-                tk.messagebox.showwarning("SANBA - PSVM", "Invalid inputs: please make sure to enter valid values.")
+                tk.messagebox.showwarning("SANBA", "Invalid inputs: please make sure to enter valid values.")
                 self.top_ploting_options.tkraise()
                 return
         
@@ -1071,12 +1071,12 @@ class PSVM(ThemedTk):
                 self.do_crosscomponent_analysis = do_crosscomponent_analysis_var.get()
 
                 self.status_var.set("New correlation and stacking parameters saved.")
-                tk.messagebox.showinfo("SANBA - PSVM", "Parameters saved successfully.")
+                tk.messagebox.showinfo("SANBA", "Parameters saved successfully.")
 
                 self.top_set_parameters.destroy()
 
             except ValueError:
-                tk.messagebox.showwarning("SANBA - PSVM", "Invalid inputs: please make sure to enter valid values.")
+                tk.messagebox.showwarning("SANBA", "Invalid inputs: please make sure to enter valid values.")
                 self.top_set_parameters.tkraise()
                 return
         
@@ -1177,12 +1177,12 @@ class PSVM(ThemedTk):
                 self.mwcs_do_similarity_analysis = do_similarity_analysis_var.get()
 
                 self.status_var.set("New MWCS parameters saved.")
-                tk.messagebox.showinfo("SANBA - PSVM", "Options saved successfully.")
+                tk.messagebox.showinfo("SANBA", "Options saved successfully.")
 
                 self.top_set_parameters.destroy()
 
             except ValueError:
-                tk.messagebox.showwarning("SANBA - PSVM", "Invalid inputs: please make sure to enter valid values.")
+                tk.messagebox.showwarning("SANBA", "Invalid inputs: please make sure to enter valid values.")
                 self.top_set_parameters.tkraise()
                 return
         
@@ -1193,40 +1193,38 @@ class PSVM(ThemedTk):
         directory = filedialog.askdirectory()
 
         if directory:
-            project_name = tk.simpledialog.askstring("SANBA - PSVM", "Enter the name of the new project:")
+            project_name = tk.simpledialog.askstring("SANBA", "Enter the name of the new project:")
 
             if project_name:
                 proj_dir = os.path.join(directory, project_name)
                 if os.path.exists(proj_dir):
-                    messagebox.showwarning("SANBA - PSVM", "This project already exists, please enter a different name.")
+                    messagebox.showwarning("SANBA", "This project already exists, please enter a different name.")
                     return
                 else:
                     os.makedirs(proj_dir, exist_ok=True)
                     data_dir = os.path.join(proj_dir, "data")
                     os.makedirs(data_dir, exist_ok=True)
-                    #os.makedirs(os.path.join(data_dir, "instrument_response"), exist_ok=True)
                     out_dir = os.path.join(proj_dir, "out")
                     os.makedirs(out_dir, exist_ok=True)
                     os.makedirs(os.path.join(out_dir, "corr"), exist_ok=True)
                     os.makedirs(os.path.join(out_dir, "stack"), exist_ok=True)
                     os.makedirs(os.path.join(out_dir, "dvv"), exist_ok=True)
-                    os.makedirs(os.path.join(out_dir, "average_dvv"), exist_ok=True)
 
                     self.current_project_path = os.path.abspath(f'projects/{project_name}')
                     self.status_var.set("Finished creating project.")
-                    tk.messagebox.showinfo("SANBA - PSVM", "Project created successfully.")
+                    tk.messagebox.showinfo("SANBA", "Project created successfully.")
 
     def load_project(self):
 
         project_dir = tk.filedialog.askdirectory(initialdir="projects")
 
         if project_dir:
-            if os.path.exists(project_dir+"/out/corr") and os.path.exists(project_dir+"/out/stack") and os.path.exists(project_dir+"/out/dvv") and os.path.exists(project_dir+"/out/average_dvv"):
+            if os.path.exists(project_dir+"/out/corr") and os.path.exists(project_dir+"/out/stack") and os.path.exists(project_dir+"/out/dvv"):
                 self.current_project_path = project_dir
                 self.status_var.set("Finished loading project.")
-                tk.messagebox.showinfo("SANBA - PSVM", "Project loaded successfully.")
+                tk.messagebox.showinfo("SANBA", "Project loaded successfully.")
             else:
-                tk.messagebox.showwarning("SANBA - PSVM", "The selected directory is not a valid project.")
+                tk.messagebox.showwarning("SANBA", "The selected directory is not a valid project.")
                 return
 
     def get_pairs(self):
@@ -1260,11 +1258,11 @@ class PSVM(ThemedTk):
 
                     if self.corr_sorting_type == "pairs" or self.corr_sorting_type == "both":
                         if len(stations2use) < 2:
-                            tk.messagebox.showwarning("SANBA - PSVM", "Current setting for sorting of stations is set to 'pairs' or 'both'. Select at least two stations to continue.")
+                            tk.messagebox.showwarning("SANBA", "Current setting for sorting of stations is set to 'pairs' or 'both'. Select at least two stations to continue.")
                             return
                     elif self.corr_sorting_type == "individual":
                         if len(stations2use) < 1:
-                            tk.messagebox.showwarning("SANBA - PSVM", "Current setting for sorting of stations is set to 'individual'. Select at least one station to continue.")
+                            tk.messagebox.showwarning("SANBA", "Current setting for sorting of stations is set to 'individual'. Select at least one station to continue.")
                             return
                         
                     pairs = []
@@ -1279,16 +1277,16 @@ class PSVM(ThemedTk):
                     self.pairs = pairs
                 
                     self.status_var.set("Finished getting pairs of stations.")
-                    tk.messagebox.showinfo("SANBA - PSVM", f"A total of {len(pairs)} pair(s) defined for a total of {len(stations2use)} selected station(s)")
+                    tk.messagebox.showinfo("SANBA", f"A total of {len(pairs)} pair(s) defined for a total of {len(stations2use)} selected station(s)")
                     self.top_get_pairs.destroy()
                 
                 ttk.Button(self.top_get_pairs, text="Get pairs", command=done, width=35).pack(pady=5)
 
             else:
-                tk.messagebox.showwarning("SANBA - PSVM", "No stations were found in the 'data' directory. Add these folders and waveform files to continue.")
+                tk.messagebox.showwarning("SANBA", "No stations were found in the 'data' directory. Add these folders and waveform files to continue.")
             
         else:
-            tk.messagebox.showwarning("SANBA - PSVM", "No project path detected. Create or load a project to continue.")
+            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
 
     def spectral_whitening(self, signal, dt, f1, f2):
         # Number of samples in the signal
@@ -1423,11 +1421,11 @@ class PSVM(ThemedTk):
     def correlation(self):
 
         if self.current_project_path == None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No project path detected. Create or load a project to continue.")
+            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
             return
             
         if self.pairs == None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No pair(s) of station(s) detected. Select stations to continue.")
+            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
             return
 
         self.progress["value"] = 0
@@ -1739,11 +1737,11 @@ class PSVM(ThemedTk):
     def stack(self):
 
         if self.current_project_path == None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No project path detected. Create or load a project to continue.")
+            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
             return
             
         if self.pairs == None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No pair(s) of station(s) detected. Select stations to continue.")
+            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
             return
 
         self.progress["value"] = 0
@@ -1990,11 +1988,11 @@ class PSVM(ThemedTk):
     def mwcs(self):
         
         if self.current_project_path == None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No project path detected. Create or load a project to continue.")
+            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
             return
             
         if self.pairs == None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No pair(s) of station(s) detected. Select stations to continue.")
+            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
             return
 
         self.progress["value"] = 0
@@ -2318,24 +2316,24 @@ class PSVM(ThemedTk):
     def plot_dvv(self):
         if self.current_project_path is None:
             tk.messagebox.showwarning(
-                "SANBA - PSVM",
+                "SANBA",
                 "No project path detected. Create or load a project to continue."
             )
             return
 
         if not self.pairs:
             tk.messagebox.showwarning(
-                "SANBA - PSVM",
+                "SANBA",
                 "No pair(s) of station(s) detected. Select stations to continue."
             )
             return
 
         plot_similarity = tk.messagebox.askyesno(
-            "SANBA - PSVM",
+            "SANBA",
             "Plot similarity in second y axis?"
         )
         plot_separately = tk.messagebox.askyesno(
-            "SANBA - PSVM",
+            "SANBA",
             "Plot dv/v separately for each pair of stations?"
         )
 
@@ -2397,7 +2395,7 @@ class PSVM(ThemedTk):
             if not os.path.exists(csv_file):
                 print(f"CSV file not found: {csv_file}")
                 tk.messagebox.showwarning(
-                    "SANBA - PSVM",
+                    "SANBA",
                     f"CSV file not found:\n{csv_file}"
                 )
                 self.progress["value"] += 1
@@ -2409,7 +2407,7 @@ class PSVM(ThemedTk):
             except Exception as e:
                 print(f"Error reading CSV file {csv_file}: {e}")
                 tk.messagebox.showerror(
-                    "SANBA - PSVM",
+                    "SANBA",
                     f"Error reading CSV file:\n{csv_file}\n\n{e}"
                 )
                 self.progress["value"] += 1
@@ -2419,7 +2417,7 @@ class PSVM(ThemedTk):
             if "timestamp" not in df.columns:
                 print(f"'timestamp' column not found in {csv_file}")
                 tk.messagebox.showerror(
-                    "SANBA - PSVM",
+                    "SANBA",
                     f"'timestamp' column not found in:\n{csv_file}"
                 )
                 self.progress["value"] += 1
@@ -2429,7 +2427,7 @@ class PSVM(ThemedTk):
             if "dvv" not in df.columns:
                 print(f"'dvv' column not found in {csv_file}")
                 tk.messagebox.showerror(
-                    "SANBA - PSVM",
+                    "SANBA",
                     f"'dvv' column not found in:\n{csv_file}"
                 )
                 self.progress["value"] += 1
@@ -2580,15 +2578,15 @@ class PSVM(ThemedTk):
         
     '''def plot_dvv(self):
         if self.current_project_path is None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No project path detected. Create or load a project to continue.")
+            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
             return
 
         if self.pairs is None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No pair(s) of station(s) detected. Select stations to continue.")
+            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
             return
         
-        plot_similarity = tk.messagebox.askyesno("SANBA - PSVM", "Plot similarity in second y axis?")
-        plot_separately = tk.messagebox.askyesno("SANBA - PSVM", "Plot dv/v separately for each pair of stations?")
+        plot_similarity = tk.messagebox.askyesno("SANBA", "Plot similarity in second y axis?")
+        plot_separately = tk.messagebox.askyesno("SANBA", "Plot dv/v separately for each pair of stations?")
         
         #plot_similarity = False
         #plot_separately = True
@@ -2754,11 +2752,11 @@ class PSVM(ThemedTk):
     '''def spatial_average(self):
 
         if self.current_project_path is None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No project path detected. Create or load a project to continue.")
+            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
             return
 
         if self.pairs is None:
-            tk.messagebox.showwarning("SANBA - PSVM", "No pair(s) of station(s) detected. Select stations to continue.")
+            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
             return
         
         #for pair in self.pairs:
