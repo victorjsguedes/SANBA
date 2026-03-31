@@ -1,6 +1,7 @@
+import sys
 import tkinter as tk
 from tkinter import ttk
-from ttkthemes import ThemedTk
+#from ttkthemes import ThemedTk
 from tkinter import filedialog
 from PIL import ImageTk, Image
 import os
@@ -46,35 +47,37 @@ from threading import Thread
 import glob
 from scipy.signal import correlate, fftconvolve
 
-class PSVM(ThemedTk):
-    def __init__(self):
-        super().__init__()
+class PSVM(ttk.Frame):
+    def __init__(self, parent: tk.Tk):
+        super().__init__(parent)
+        self.parent = parent
 
-        try:
-            self.state("zoomed")  # Windows
-        except tk.TclError:
-            self.attributes("-zoomed", True)  # Linux (some WMs)
+        self.parent.overrideredirect(False)
+        
+        self.version = "v1.0.0"
+
+        self.parent.geometry("1024x768")
             
-        self.title("SANBA | Seismic Ambient Noise Based Analysis")
+        self.parent.title(f"SANBA | Seismic Ambient Noise-Based Analysis {self.version}")
 
-        style = ttk.Style(self)
+        style = ttk.Style(self.parent)
         style.theme_use("vista")
         default_font = ("Segoe UI", 10)  # looks modern on Windows; ok elsewhere
-        self.option_add("*Font", default_font)
+        self.parent.option_add("*Font", default_font)
         style.configure("Toolbar.TFrame", padding=(8, 6))
         style.configure("Toolbar.TButton", padding=(8, 6))
         style.configure("Status.TLabel", padding=(10, 6))
         style.configure("Tooltip.TFrame", relief="solid", borderwidth=1)
         style.configure("Tooltip.TLabel")
 
-        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.parent.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         script_dir = os.path.dirname(os.path.realpath(__file__))
-        self.window_ico = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "surffy_ico.png")))
-        self.iconphoto(False, self.window_ico)
+        self.window_ico = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_sanba.png")))
+        self.parent.iconphoto(False, self.window_ico)
 
-        menubar = tk.Menu(self)
-        self.config(menu=menubar)
+        menubar = tk.Menu(self.parent)
+        self.parent.config(menu=menubar)
 
         file_menu = tk.Menu(menubar, tearoff=False)
         menubar.add_cascade(label="File", menu=file_menu)
@@ -108,52 +111,52 @@ class PSVM(ThemedTk):
         #options_menu.add_separator()
         #options_menu.add_command(label="Load parameters from file", command=self.load_settings_file)
 
-        toolbar_frame = ttk.Frame(self, style="Toolbar.TFrame")
+        toolbar_frame = ttk.Frame(self.parent, style="Toolbar.TFrame")
         toolbar_frame.pack(fill="x")
 
-        self.create_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_novoProjeto.gif")))
-        self.open_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_abrir.gif")))
-        self.get_pairs_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "merge_ico.png")))
-        self.corr_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "correlation_ico.png")))
-        self.stack_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_mergeResults.gif")))
-        self.mwcs_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_fit.gif")))
-        self.plot_dvv_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "grafico.gif")))
+        self.create_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_new.png")))
+        self.open_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_load.png")))
+        self.get_pairs_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_pair.png")))
+        self.corr_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_corr.png")))
+        self.stack_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_stack.png")))
+        self.mwcs_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_mwcs.png")))
+        self.plot_dvv_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_dvv.png")))
         #self.spatAverage_dvv_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "spatial_average_ico.png")))
-        self.options_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "opt.gif")))
+        self.options_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_options.png")))
 
-        self.create_project_button = ttk.Button(toolbar_frame, image=self.create_ico_img, command=self.create_project)
+        self.create_project_button = ttk.Button(toolbar_frame, image=self.create_ico_img, command=self.create_project,style="Toolbar.TButton")
         self.create_project_button.pack(side="left")
 
-        self.load_project_button = ttk.Button(toolbar_frame, image=self.open_ico_img, command=self.load_project)
+        self.load_project_button = ttk.Button(toolbar_frame, image=self.open_ico_img, command=self.load_project,style="Toolbar.TButton")
         self.load_project_button.pack(side="left")
 
-        self.find_pairs_button = ttk.Button(toolbar_frame, image=self.get_pairs_ico_img, command=self.get_pairs)
+        self.find_pairs_button = ttk.Button(toolbar_frame, image=self.get_pairs_ico_img, command=self.get_pairs,style="Toolbar.TButton")
         self.find_pairs_button.pack(side="left")
 
-        self.corr_button = ttk.Button(toolbar_frame, image=self.corr_ico_img, command=lambda: Thread(target=self.correlation).start())
+        self.corr_button = ttk.Button(toolbar_frame, image=self.corr_ico_img, command=lambda: Thread(target=self.correlation).start(),style="Toolbar.TButton")
         self.corr_button.pack(side="left")
 
-        self.stack_button = ttk.Button(toolbar_frame, image=self.stack_ico_img, command=lambda: Thread(target=self.stack).start())
+        self.stack_button = ttk.Button(toolbar_frame, image=self.stack_ico_img, command=lambda: Thread(target=self.stack).start(),style="Toolbar.TButton")
         self.stack_button.pack(side="left")
 
-        self.mwcs_button = ttk.Button(toolbar_frame, image=self.mwcs_ico_img, command=lambda: Thread(target=self.mwcs).start())
+        self.mwcs_button = ttk.Button(toolbar_frame, image=self.mwcs_ico_img, command=lambda: Thread(target=self.mwcs).start(),style="Toolbar.TButton")
         self.mwcs_button.pack(side="left")
 
-        self.plot_dvv_button = ttk.Button(toolbar_frame, image=self.plot_dvv_ico_img, command=lambda: Thread(target=self.plot_dvv).start())
+        self.plot_dvv_button = ttk.Button(toolbar_frame, image=self.plot_dvv_ico_img, command=lambda: Thread(target=self.plot_dvv).start(),style="Toolbar.TButton")
         self.plot_dvv_button.pack(side="left")
 
         #self.plot_spatial_average_dvv_button = ttk.Button(toolbar_frame, image=self.spatAverage_dvv_ico_img, command=lambda: Thread(target=self.spatial_average).start())
         #self.plot_spatial_average_dvv_button.pack(side="left")
 
-        self.options_button = ttk.Button(toolbar_frame, image=self.options_ico_img, command=self.options)
+        self.options_button = ttk.Button(toolbar_frame, image=self.options_ico_img, command=self.options,style="Toolbar.TButton")
         self.options_button.pack(side="left")
 
-        ttk.Label(toolbar_frame, text="Progresso: ").pack(side="left")
+        ttk.Label(toolbar_frame, text="Progress: ").pack(side="left")
         
         self.progress = ttk.Progressbar(toolbar_frame, length=220, mode="determinate")
         self.progress.pack(side="left")
 
-        frame_plot = ttk.Frame(self)
+        frame_plot = ttk.Frame(self.parent)
         frame_plot.pack(fill="both", expand="True")
 
         self.fig = plt.figure()
@@ -169,7 +172,7 @@ class PSVM(ThemedTk):
         toolbar.update()
         canvas.get_tk_widget().pack(side="top", fill="both", expand=1)
 
-        status_frame = ttk.Frame(self)
+        status_frame = ttk.Frame(self.parent)
         status_frame.pack(side=tk.BOTTOM, fill=tk.X)
 
         self.status_var = tk.StringVar()
@@ -227,8 +230,8 @@ class PSVM(ThemedTk):
 
     def on_closing(self):
         if tk.messagebox.askyesno("SANBA", "Exit?"):
-            plt.close("all")
-            self.destroy()
+            self.parent.destroy()
+            sys.exit()
 
     def options(self):
 
@@ -388,7 +391,7 @@ class PSVM(ThemedTk):
         entry_xcorr_max_freq.grid(row=20, column=1, sticky="ew", padx=corr_padx, pady=corr_pady)
         entry_xcorr_max_freq.insert(0, self.corr_max_freq)
 
-        ttk.Label(corr_scrollable_frame, text="Maximum absolute lag-time (s):").grid(row=21, column=0, sticky="w", padx=corr_padx, pady=corr_pady)
+        ttk.Label(corr_scrollable_frame, text="Maximum absolute time lag (s):").grid(row=21, column=0, sticky="w", padx=corr_padx, pady=corr_pady)
         entry_xcorr_max_lag = ttk.Entry(corr_scrollable_frame, width=25)
         entry_xcorr_max_lag.grid(row=21, column=1, sticky="ew", padx=corr_padx, pady=corr_pady)
         entry_xcorr_max_lag.insert(0, self.corr_max_lag)
@@ -464,7 +467,7 @@ class PSVM(ThemedTk):
         entry_mwcs_step.grid(row=8, column=1, sticky="ew", padx=mwcs_padx, pady=mwcs_pady)
         entry_mwcs_step.insert(0, self.mwcs_window_step)
 
-        ttk.Label(tab_mwcs, text="Start lag-time for moving window (s):").grid(row=9, column=0, sticky="w", padx=mwcs_padx, pady=mwcs_pady)
+        ttk.Label(tab_mwcs, text="Start time lag for moving window (s):").grid(row=9, column=0, sticky="w", padx=mwcs_padx, pady=mwcs_pady)
         entry_mwcs_start_time = ttk.Entry(tab_mwcs, width=25)
         entry_mwcs_start_time.grid(row=9, column=1, sticky="ew", padx=mwcs_padx, pady=mwcs_pady)
         entry_mwcs_start_time.insert(0, self.mwcs_moving_start)
@@ -483,12 +486,12 @@ class PSVM(ThemedTk):
         entry_mwcs_max_err_filter.grid(row=12, column=1, sticky="ew", padx=mwcs_padx, pady=mwcs_pady)
         entry_mwcs_max_err_filter.insert(0, self.mwcs_error_max)
 
-        ttk.Label(tab_mwcs, text="Maximum absolute lag-time (s):").grid(row=13, column=0, sticky="w", padx=mwcs_padx, pady=mwcs_pady)
+        ttk.Label(tab_mwcs, text="Maximum absolute time lag (s):").grid(row=13, column=0, sticky="w", padx=mwcs_padx, pady=mwcs_pady)
         entry_mwcs_max_time_filter = ttk.Entry(tab_mwcs, width=25)
         entry_mwcs_max_time_filter.grid(row=13, column=1, sticky="ew", padx=mwcs_padx, pady=mwcs_pady)
         entry_mwcs_max_time_filter.insert(0, self.mwcs_lagtime_max)
 
-        ttk.Label(tab_mwcs, text="Ballistic arrival exclusion absolute lag-time (s):").grid(row=14, column=0, sticky="w", padx=mwcs_padx, pady=mwcs_pady)
+        ttk.Label(tab_mwcs, text="Ballistic arrival exclusion absolute time lag (s):").grid(row=14, column=0, sticky="w", padx=mwcs_padx, pady=mwcs_pady)
         entry_mwcs_min_time_filter = ttk.Entry(tab_mwcs, width=25)
         entry_mwcs_min_time_filter.grid(row=14, column=1, sticky="ew", padx=mwcs_padx, pady=mwcs_pady)
         entry_mwcs_min_time_filter.insert(0, self.mwcs_lagtime_ballistic)
@@ -623,7 +626,7 @@ class PSVM(ThemedTk):
                     raise ValueError("MWCS lag times must be non-negative.")
 
                 if self.mwcs_lagtime_ballistic > self.mwcs_lagtime_max:
-                    raise ValueError("Ballistic exclusion lag-time cannot be greater than maximum lag-time.")
+                    raise ValueError("Ballistic exclusion time lag cannot be greater than maximum time lag.")
 
                 self.status_var.set("New settings saved successfully.")
                 tk.messagebox.showinfo("SANBA", "Settings saved successfully.")
@@ -640,63 +643,6 @@ class PSVM(ThemedTk):
         ttk.Button(button_frame, text="Cancel", command=cancel, width=18).pack(side="right", padx=(6, 0))
         ttk.Button(button_frame, text="Save settings", command=done, width=18).pack(side="right")
 
-    '''def options(self):
-
-        self.top_options = tk.Toplevel(self)
-        self.top_options.geometry("400x250")
-        self.top_options.resizable(0,0)
-        self.top_options.title("PSVM - Options")
-        
-        ttk.Button(self.top_options, text="Correlation and stacking options", command=self.set_parameters_corr_stack, width=35).pack(pady=5)
-        ttk.Button(self.top_options, text="MWCS options", command=self.set_parameters_mwcs, width=35).pack(pady=5)
-        ttk.Button(self.top_options, text="Plot options", command=self.ploting_options, width=35).pack(pady=5)
-        #ttk.Button(self.top_options, text="Spatial average options", command=self.settings_spatial_average, width=35).pack(pady=5)'''        
-
-    '''def run_custom(self):
-        self.stack()
-        self.run_mwcs_dvv()
-        
-    def run_mwcs_dvv(self):
-
-        import shutil
-        
-        if self.current_project_path == None:
-            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
-            return
-            
-        if self.pairs == None:
-            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
-            return
-
-        out_dir = os.path.join(self.current_project_path, "out")
-                           
-        parameters = [(4,10),
-                      (6,10),
-                      (8,10)]
-        
-        stacks = [0.5,1,2,4,8]
-
-        for stackd in stacks:
-
-            #self.stack_path_temp = r'C:\AltamiraPA\proc_dvv_AltamiraPA\resultados_oficiais\out_pcc_24Hz_3600s_5s_0.5-12Hz_%sd_2-10Hz\stack'%stackd
-            self.stack_path_temp = r'C:\ItabiritoMG\processamento_dvv_ItabiritoMG\resultados_oficiais\out_pcc_24Hz_3600s_5s_2-12Hz_%sd_4-10Hz\stack'%stackd
-            
-            if stackd < 1: self.stack_window_length_days = stackd
-            else: self.stack_window_length_days = int(stackd)
-            
-            for parameter in parameters:
-                self.mwcs_freq_min = parameter[0]
-                self.mwcs_freq_max = parameter[1]
-                self.mwcs()
-                #self.plot_dvv()
-
-                pattern = os.path.join(out_dir, "log_mwcs*.txt")
-                for txt_file in glob.glob(pattern):
-                    try:
-                        os.remove(txt_file)
-                        print(f"Deleted: {txt_file}")
-                    except Exception as e:
-                        print(f"Failed to delete {txt_file}: {e}")'''
     def run_all(self):
         
         if self.current_project_path == None:
@@ -711,482 +657,6 @@ class PSVM(ThemedTk):
         self.stack()
         self.mwcs()
         self.plot_dvv()
-            
-    '''def run_all(self):
-
-        import shutil
-        
-        if self.current_project_path == None:
-            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
-            return
-            
-        if self.pairs == None:
-            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
-            return
-
-        #f1,f2,stack_days,canal,metodo_correlacao,referencia,fazer_analise_cross_component
-        parameters = [(0.5,12,1,"OS","HHZ.D","individual","pcc","mean",True,2,10)]
-        
-        created_folders = []
-
-        for parameter in parameters:
-            self.corr_min_freq, self.corr_max_freq = parameter[0], parameter[1]
-            self.mwcs_freq_min, self.mwcs_freq_max = parameter[0], parameter[1]
-            self.corr_resample_rate = parameter[1] * 2
-            self.stack_window_length_days = parameter[2]
-            self.network_code = parameter[3]
-            self.channel_code = parameter[4]
-            self.corr_sorting_type = parameter[5]
-            self.correlation_method = parameter[6]
-            self.mwcs_reference = parameter[7]
-            self.do_crosscomponent_analysis = parameter[8]
-            self.mwcs_freq_min = parameter[9]
-            self.mwcs_freq_max = parameter[10]
-
-            if self.correlation_method == "cc":
-                self.corr_onebit_norm = True
-                self.corr_spectral_whitening = True
-            elif self.correlation_method == "pcc":
-                self.corr_onebit_norm = False
-                self.corr_spectral_whitening = False
-
-            #self.correlation()
-            self.stack()
-            self.mwcs()
-            self.plot_dvv()
-
-            out_dir = os.path.join(self.current_project_path, "out")
-            #new_folder_name = f'out_{self.corr_min_freq}to{self.corr_max_freq}hz_stack{self.stack_window_length_days}d_{self.correlation_method}_{self.mwcs_reference}'
-            new_folder_name = f'out_{self.correlation_method}_{self.corr_resample_rate}Hz_{self.corr_window_size}s_{self.corr_max_lag}s_{self.corr_min_freq}-{self.corr_max_freq}Hz_{self.stack_window_length_days}d_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz'
-            new_folder_path = os.path.join(out_dir, new_folder_name)
-            os.makedirs(new_folder_path, exist_ok=True)
-
-            # Move only the new output files to the new folder
-            for item in os.listdir(out_dir):
-                if item == "corr":
-                    continue
-                item_path = os.path.join(out_dir, item)
-                if item_path not in created_folders and item_path != new_folder_path:
-                    shutil.move(item_path, new_folder_path)
-
-            created_folders.append(new_folder_path)
-
-            # Create new folders called corr, stack, dvv, and average_dvv
-            #subfolders = ['corr', 'stack', 'dvv', 'average_dvv']
-            subfolders = ['stack', 'dvv', 'average_dvv']
-            for subfolder in subfolders:
-                os.makedirs(os.path.join(out_dir, subfolder), exist_ok=True)
-
-            time.sleep(5)'''
-        
-    '''def load_settings_file(self):
-
-        try: self.top_options.destroy()
-        except: pass
-        
-        settings_file = tk.filedialog.askopenfilename(filetypes=[("Settings file", "*.txt")])
-
-        if settings_file:
-
-            settings_df = pd.read_csv(settings_file,sep=' ', index_col=0, header=None)
-
-            if len(settings_df) > 0:
-                try:
-                    self.current_project_path = str(settings_df.loc['project_path'].values[0])
-
-                    self.network_code = str(settings_df.loc['network_code'].values[0])
-                    self.channel_code = str(settings_df.loc['channel_code'].values[0])
-                    self.corr_sorting_type = str(settings_df.loc['sorting_type'].values[0])
-                    self.correlation_method = str(settings_df.loc['correlation_method'].values[0])
-                    self.corr_remove_response = int(settings_df.loc['remove_response'].values[0])
-                    self.corr_remove_mean = int(settings_df.loc['remove_mean'].values[0])
-                    self.corr_remove_trend = int(settings_df.loc['remove_trend'].values[0])
-                    self.corr_taper = int(settings_df.loc['taper'].values[0])
-                    self.corr_onebit_norm = int(settings_df.loc['onebit_normalization'].values[0])
-                    self.corr_spectral_whitening = int(settings_df.loc['spectral_whitening'].values[0])
-                    self.corr_bandpass_filter = int(settings_df.loc['bandpass_filter'].values[0])
-                    self.corr_window_size = eval(settings_df.loc['window_length'].values[0])
-                    self.corr_overlap = eval(settings_df.loc['window_overlap'].values[0])
-                    self.corr_resample_rate = eval(settings_df.loc['resample_rate'].values[0])
-                    self.corr_min_freq = eval(settings_df.loc['correlation_min_freq'].values[0])
-                    self.corr_max_freq = eval(settings_df.loc['correlation_max_freq'].values[0])
-                    self.corr_max_lag = eval(settings_df.loc['correlation_max_lag'].values[0])
-                    self.corr_snr_threshold = eval(settings_df.loc['correlation_snr_threshold'].values[0])
-                    self.stack_window_length_days = eval(settings_df.loc['stack_window_length_days'].values[0])
-
-                    self.mwcs_reference = str(settings_df.loc['mwcs_reference'].values[0])
-                    self.mwcs_freq_min = eval(settings_df.loc['mwcs_freq_min'].values[0])
-                    self.mwcs_freq_max = eval(settings_df.loc['mwcs_freq_max'].values[0])
-                    self.mwcs_window_length = eval(settings_df.loc['mwcs_window_length'].values[0])
-                    self.mwcs_window_step = eval(settings_df.loc['mwcs_window_step'].values[0])
-                    self.mwcs_moving_start = eval(settings_df.loc['mwcs_window_start'].values[0])
-                    self.mwcs_coherency_min = eval(settings_df.loc['mwcs_coherency_min'].values[0])
-                    self.mwcs_error_max = eval(settings_df.loc['mwcs_error_max'].values[0])
-                    self.mwcs_lagtime_ballistic = eval(settings_df.loc['mwcs_min_lagtime'].values[0])
-                    self.mwcs_lagtime_max = eval(settings_df.loc['mwcs_max_lagtime'].values[0])
-                    self.mwcs_abs_delay_time_limit = eval(settings_df.loc['mwcs_abs_delay_time_limit'].values[0])
-
-                    self.corr_plot = int(settings_df.loc['correlation_plot'].values[0])
-                    self.stack_plot = int(settings_df.loc['stack_plot'].values[0])
-                    self.mwcs_plot = int(settings_df.loc['mwcs_plot'].values[0])
-                    self.plot_dvv_gap_limit = eval(settings_df.loc['plot_dvv_gap_limit'].values[0])
-
-                    self.spatial_average_median_filter = int(settings_df.loc['spatial_average_median_filter'].values[0])
-                    self.spatial_average_filter_window_size = str(settings_df.loc['spatial_average_filter_window_size'].values[0])
-                    self.spatial_average_gap_limit = eval(settings_df.loc['spatial_average_gap_limit'].values[0])
-
-                    self.status_var.set("All new parameters were loaded.")
-                    tk.messagebox.showinfo("SANBA", "Parameters loaded successfully.")
-
-                    if os.path.exists(self.current_project_path+"/data/instrument_response") and os.path.exists(self.current_project_path+"/out/corr") and os.path.exists(self.current_project_path+"/out/stack") and os.path.exists(self.current_project_path+"/out/dvv") and os.path.exists(self.current_project_path+"/out/average_dvv"):
-                        pass
-                    else:
-                        self.current_project_path = None
-                        tk.messagebox.showwarning("SANBA", "The pointed path is not a valid project. Create or load a project path to continue.")
-
-                        if tk.messagebox.askyesno("SANBA", "Create a new project?"):
-                            self.create_project()
-                        else:
-                            if tk.messagebox.askyesno("SANBA", "Load an existing project?"):
-                                self.load_project()
-
-                    self.top_options.destroy()
-                    
-                except Exception as e:
-                    tk.messagebox.showwarning("SANBA", "Error while reading parameters in the selected file. Please, check the content of the file.")
-                    return'''
-            
-    '''def settings_spatial_average(self):
-
-        try: self.top_options.destroy()
-        except: pass
-        
-        self.top_spatial_average_options = tk.Toplevel(self)
-        self.top_spatial_average_options.geometry("400x300")
-        self.top_spatial_average_options.resizable(0,0)
-        self.top_spatial_average_options.title("PSVM - Spatial average options")
-
-        spatial_average_median_filter_var = tk.BooleanVar()
-        spatial_average_median_filter_var.set(self.spatial_average_median_filter)
-        ttk.Checkbutton(self.top_spatial_average_options, text="Use moving window median filter", variable=spatial_average_median_filter_var).pack(pady=5)
-
-        ttk.Label(self.top_spatial_average_options, text="Window size for moving median filter\n(4S = 4 seconds, 4M = 4 minutes, 4H = 4 hours):").pack(pady=5)
-        entry_spatial_average_windows_size_filter = ttk.Entry(self.top_spatial_average_options)
-        entry_spatial_average_windows_size_filter.pack()
-        entry_spatial_average_windows_size_filter.insert(0, self.spatial_average_filter_window_size)
-
-        ttk.Label(self.top_spatial_average_options, text="Maximum gap limit for spatially averaged dv/v plot (in seconds):").pack(pady=5)
-        entry_spatial_average_gap = ttk.Entry(self.top_spatial_average_options)
-        entry_spatial_average_gap.pack()
-        entry_spatial_average_gap.insert(0, self.spatial_average_gap_limit)
-
-        def done():
-            
-            try:
-                self.spatial_average_median_filter = spatial_average_median_filter_var.get()
-                self.spatial_average_filter_window_size = str(entry_spatial_average_windows_size_filter.get())
-                self.spatial_average_gap_limit = float(entry_spatial_average_gap.get())
-
-                self.status_var.set("New spatial average parameters saved.")
-                tk.messagebox.showinfo("SANBA", "Parameters saved successfully.")
-
-                self.top_spatial_average_options.destroy()
-
-            except Exception as e:
-                print(e)
-                tk.messagebox.showwarning("SANBA", "Invalid inputs: please make sure to enter valid values.")
-                self.top_spatial_average_options.tkraise()
-                return
-        
-        ttk.Button(self.top_spatial_average_options, text="Set", command=done, width=35).pack(pady=5)'''
-    
-    '''def ploting_options(self):
-
-        try: self.top_options.destroy()
-        except: pass
-        
-        self.top_ploting_options = tk.Toplevel(self)
-        self.top_ploting_options.geometry("450x200")
-        self.top_ploting_options.resizable(0,0)
-        self.top_ploting_options.title("PSVM - Ploting options")
-
-        plot_corr_var = tk.BooleanVar()
-        plot_corr_var.set(self.corr_plot)
-        ttk.Checkbutton(self.top_ploting_options, text="Plot image of correlation functions over time", variable=plot_corr_var).pack(pady=5)
-
-        plot_stack_var = tk.BooleanVar()
-        plot_stack_var.set(self.stack_plot)
-        ttk.Checkbutton(self.top_ploting_options, text="Plot image of stack functions over time", variable=plot_stack_var).pack(pady=5)
-
-        plot_mwcs_var = tk.BooleanVar()
-        plot_mwcs_var.set(self.mwcs_plot)
-        ttk.Checkbutton(self.top_ploting_options, text="Plot images of delay times least-squares regression (MWCS)", variable=plot_mwcs_var).pack(pady=5)
-
-        def done():
-            
-            try:
-                self.corr_plot = plot_corr_var.get()
-                self.stack_plot = plot_stack_var.get()
-                self.mwcs_plot = plot_mwcs_var.get()
-
-                self.status_var.set("New plotting parameters saved.")
-                tk.messagebox.showinfo("SANBA", "Parameters saved successfully.")
-
-                self.top_ploting_options.destroy()
-
-            except ValueError:
-                tk.messagebox.showwarning("SANBA", "Invalid inputs: please make sure to enter valid values.")
-                self.top_ploting_options.tkraise()
-                return
-        
-        ttk.Button(self.top_ploting_options, text="Set", command=done, width=35).pack(pady=5)'''
-    
-    '''def set_parameters_corr_stack(self):
-
-        try: self.top_options.destroy()
-        except: pass
-        
-        self.top_set_parameters = tk.Toplevel(self)
-        self.top_set_parameters.geometry("450x790")
-        self.top_set_parameters.resizable(0,0)
-        self.top_set_parameters.title("PSVM - Correlation and stacking")
-
-        ttk.Label(self.top_set_parameters, text="Network code:").pack()
-        entry_network_code = ttk.Entry(self.top_set_parameters)
-        entry_network_code.pack()
-        entry_network_code.insert(0, self.network_code)
-
-        ttk.Label(self.top_set_parameters, text="Channel code:").pack()
-        entry_channel_code = ttk.Entry(self.top_set_parameters)
-        entry_channel_code.pack()
-        entry_channel_code.insert(0, self.channel_code)
-
-        do_crosscomponent_analysis_var = tk.BooleanVar()
-        do_crosscomponent_analysis_var.set(self.mwcs_do_similarity_analysis)
-        ttk.Checkbutton(self.top_set_parameters, text="Do cross-component analysis", variable=do_crosscomponent_analysis_var).pack()
-        
-        ttk.Label(self.top_set_parameters, text="Sort stations by:").pack()
-        sorting_type_var = tk.StringVar()
-        sorting_type_var.set(self.corr_sorting_type)
-        ttk.Radiobutton(self.top_set_parameters, text="Pairs (do cross-correlations)", variable=sorting_type_var, value="pairs").pack()
-        ttk.Radiobutton(self.top_set_parameters, text="Individual (do auto-correlations)", variable=sorting_type_var, value="individual").pack()
-        ttk.Radiobutton(self.top_set_parameters, text="Both", variable=sorting_type_var, value="both").pack()
-
-        ttk.Label(self.top_set_parameters, text="Resample rate (in Hz):").pack()
-        entry_xcorr_resample = ttk.Entry(self.top_set_parameters)
-        entry_xcorr_resample.pack()
-        entry_xcorr_resample.insert(0, self.corr_resample_rate)
-        
-        ttk.Label(self.top_set_parameters, text="Window length (in seconds):").pack()
-        entry_xcorr_length = ttk.Entry(self.top_set_parameters)
-        entry_xcorr_length.pack()
-        entry_xcorr_length.insert(0, self.corr_window_size)
-
-        ttk.Label(self.top_set_parameters, text="Window overlap (0.5 = 50% overlap):").pack()
-        entry_xcorr_overlap = ttk.Entry(self.top_set_parameters)
-        entry_xcorr_overlap.pack()
-        entry_xcorr_overlap.insert(0, self.corr_overlap)
-
-        remove_response_var = tk.BooleanVar()
-        remove_response_var.set(self.corr_remove_response)
-        ttk.Checkbutton(self.top_set_parameters, text="Remove instrument response", variable=remove_response_var).pack()
-
-        remove_mean_var = tk.BooleanVar()
-        remove_mean_var.set(self.corr_remove_mean)
-        ttk.Checkbutton(self.top_set_parameters, text="Remove mean", variable=remove_mean_var).pack()
-
-        remove_trend_var = tk.BooleanVar()
-        remove_trend_var.set(self.corr_remove_trend)
-        ttk.Checkbutton(self.top_set_parameters, text="Remove trend", variable=remove_trend_var).pack()
-
-        taper_var = tk.BooleanVar()
-        taper_var.set(self.corr_taper)
-        ttk.Checkbutton(self.top_set_parameters, text="Taper", variable=taper_var).pack()
-        
-        bandpass_filter_var = tk.BooleanVar()
-        bandpass_filter_var.set(self.corr_bandpass_filter)
-        ttk.Checkbutton(self.top_set_parameters, text="Bandpass filter", variable=bandpass_filter_var).pack()
-
-        spectral_whitening_var = tk.BooleanVar()
-        spectral_whitening_var.set(self.corr_spectral_whitening)
-        ttk.Checkbutton(self.top_set_parameters, text="Spectral whitenning", variable=spectral_whitening_var).pack()
-
-        onebit_norm_var = tk.BooleanVar()
-        onebit_norm_var.set(self.corr_onebit_norm)
-        ttk.Checkbutton(self.top_set_parameters, text="1-bit normalization", variable=onebit_norm_var).pack()
-
-        ttk.Label(self.top_set_parameters, text="Minimum frequency for bandpass filtering/spectral whitening (in Hz):").pack()
-        entry_xcorr_min_freq = ttk.Entry(self.top_set_parameters)
-        entry_xcorr_min_freq.pack()
-        entry_xcorr_min_freq.insert(0, self.corr_min_freq)
-
-        ttk.Label(self.top_set_parameters, text="Maximum frequency for bandpass filtering/spectral whitening (in Hz):").pack()
-        entry_xcorr_max_freq = ttk.Entry(self.top_set_parameters)
-        entry_xcorr_max_freq.pack()
-        entry_xcorr_max_freq.insert(0, self.corr_max_freq)
-
-        ttk.Label(self.top_set_parameters, text="Correlation maximum absolute lag-time (in seconds):").pack()
-        entry_xcorr_max_lag = ttk.Entry(self.top_set_parameters)
-        entry_xcorr_max_lag.pack()
-        entry_xcorr_max_lag.insert(0, self.corr_max_lag)
-
-        ttk.Label(self.top_set_parameters, text="Correlation minimum signal-to-noise ratio tolerance (0 = accept all):").pack()
-        entry_xcorr_snr = ttk.Entry(self.top_set_parameters)
-        entry_xcorr_snr.pack()
-        entry_xcorr_snr.insert(0, self.corr_snr_threshold)
-
-        ttk.Label(self.top_set_parameters, text="Signal extraction method:").pack()
-        correlation_method_var = tk.StringVar()
-        correlation_method_var.set(self.correlation_method)
-        ttk.Radiobutton(self.top_set_parameters, text="Cross-correlation", variable=correlation_method_var, value="cc").pack()
-        ttk.Radiobutton(self.top_set_parameters, text="Phase cross-correlation", variable=correlation_method_var, value="pcc").pack()
-
-        ttk.Label(self.top_set_parameters, text="Number of days for moving window stacking:").pack()
-        entry_stack_ndays = ttk.Entry(self.top_set_parameters)
-        entry_stack_ndays.pack()
-        entry_stack_ndays.insert(0, self.stack_window_length_days)
-
-        def done():
-            
-            try:
-                self.corr_sorting_type = sorting_type_var.get()
-                self.correlation_method = correlation_method_var.get()
-                self.corr_remove_response = remove_response_var.get()
-                self.corr_remove_mean = remove_mean_var.get()
-                self.corr_remove_trend = remove_trend_var.get()
-                self.corr_taper = taper_var.get()
-                self.corr_onebit_norm = onebit_norm_var.get()
-                self.corr_spectral_whitening = spectral_whitening_var.get()
-                self.corr_bandpass_filter = bandpass_filter_var.get()
-                self.corr_window_size = float(entry_xcorr_length.get())
-                self.corr_overlap = float(entry_xcorr_overlap.get())
-                self.corr_resample_rate = float(entry_xcorr_resample.get())
-                self.corr_min_freq = float(entry_xcorr_min_freq.get())
-                self.corr_max_freq = float(entry_xcorr_max_freq.get())
-                self.corr_max_lag = float(entry_xcorr_max_lag.get())
-                self.corr_snr_threshold = float(entry_xcorr_snr.get())
-                self.stack_window_length_days = float(entry_stack_ndays.get())
-                self.network_code = str(entry_network_code.get())
-                self.channel_code = str(entry_channel_code.get())
-                self.do_crosscomponent_analysis = do_crosscomponent_analysis_var.get()
-
-                self.status_var.set("New correlation and stacking parameters saved.")
-                tk.messagebox.showinfo("SANBA", "Parameters saved successfully.")
-
-                self.top_set_parameters.destroy()
-
-            except ValueError:
-                tk.messagebox.showwarning("SANBA", "Invalid inputs: please make sure to enter valid values.")
-                self.top_set_parameters.tkraise()
-                return
-        
-        ttk.Button(self.top_set_parameters, text="Set", command=done, width=35).pack(pady=5)'''
-
-    '''def set_parameters_mwcs(self):
-
-        try: self.top_options.destroy()
-        except: pass
-        
-        self.top_set_parameters = tk.Toplevel(self)
-        self.top_set_parameters.geometry("450x630")
-        self.top_set_parameters.resizable(0,0)
-        self.top_set_parameters.title("PSVM - MWCS")
-
-        ttk.Label(self.top_set_parameters, text="Reference function:").pack()
-        mwcs_reference_type_var = tk.StringVar()
-        mwcs_reference_type_var.set(self.mwcs_reference)
-        ttk.Radiobutton(self.top_set_parameters, text="Static (first stack)", variable=mwcs_reference_type_var, value="static").pack()
-        ttk.Radiobutton(self.top_set_parameters, text="Mean of all stacks", variable=mwcs_reference_type_var, value="mean").pack()
-        ttk.Radiobutton(self.top_set_parameters, text="Following behind current", variable=mwcs_reference_type_var, value="following").pack()
-        
-        ttk.Label(self.top_set_parameters, text="Minimum frequency (in Hz):").pack()
-        entry_mwcs_min_freq = ttk.Entry(self.top_set_parameters)
-        entry_mwcs_min_freq.pack()
-        entry_mwcs_min_freq.insert(0, self.mwcs_freq_min)
-
-        ttk.Label(self.top_set_parameters, text="Maximum frequency (in Hz):").pack()
-        entry_mwcs_max_freq = ttk.Entry(self.top_set_parameters)
-        entry_mwcs_max_freq.pack()
-        entry_mwcs_max_freq.insert(0, self.mwcs_freq_max)
-
-        ttk.Label(self.top_set_parameters, text="Moving window length (in seconds):").pack()
-        entry_mwcs_window = ttk.Entry(self.top_set_parameters)
-        entry_mwcs_window.pack()
-        entry_mwcs_window.insert(0, self.mwcs_window_length)
-
-        ttk.Label(self.top_set_parameters, text="Moving window step (in seconds):").pack()
-        entry_mwcs_step = ttk.Entry(self.top_set_parameters)
-        entry_mwcs_step.pack()
-        entry_mwcs_step.insert(0, self.mwcs_window_step)
-
-        ttk.Label(self.top_set_parameters, text="Start lag-time for moving window (in seconds):").pack()
-        entry_mwcs_start_time = ttk.Entry(self.top_set_parameters)
-        entry_mwcs_start_time.pack()
-        entry_mwcs_start_time.insert(0, self.mwcs_moving_start)
-
-        ttk.Label(self.top_set_parameters, text="Minimum coherency for filtering out delay times:").pack()
-        entry_mwcs_min_coh_filter = ttk.Entry(self.top_set_parameters)
-        entry_mwcs_min_coh_filter.pack()
-        entry_mwcs_min_coh_filter.insert(0, self.mwcs_coherency_min)
-
-        ttk.Label(self.top_set_parameters, text="Maximum error for filtering out delay times:").pack()
-        entry_mwcs_max_err_filter = ttk.Entry(self.top_set_parameters)
-        entry_mwcs_max_err_filter.pack()
-        entry_mwcs_max_err_filter.insert(0, self.mwcs_error_max)
-
-        ttk.Label(self.top_set_parameters, text="Maximum absolute lag-time for filtering out delay times (in seconds):").pack()
-        entry_mwcs_max_time_filter = ttk.Entry(self.top_set_parameters)
-        entry_mwcs_max_time_filter.pack()
-        entry_mwcs_max_time_filter.insert(0, self.mwcs_lagtime_max)
-
-        ttk.Label(self.top_set_parameters, text="Maximum absolute lag-time for filtering out ballistic arrivals (in seconds):").pack()
-        entry_mwcs_min_time_filter = ttk.Entry(self.top_set_parameters)
-        entry_mwcs_min_time_filter.pack()
-        entry_mwcs_min_time_filter.insert(0, self.mwcs_lagtime_ballistic)
-
-        ttk.Label(self.top_set_parameters, text="Absolute limit for delay times (in seconds):").pack()
-        entry_mwcs_max_dt_filter = ttk.Entry(self.top_set_parameters)
-        entry_mwcs_max_dt_filter.pack()
-        entry_mwcs_max_dt_filter.insert(0, self.mwcs_abs_delay_time_limit)
-
-        do_similarity_analysis_var = tk.BooleanVar()
-        do_similarity_analysis_var.set(self.mwcs_do_similarity_analysis)
-        ttk.Checkbutton(self.top_set_parameters, text="Run similarity analysis", variable=do_similarity_analysis_var).pack()
-        
-        ttk.Label(self.top_set_parameters, text="Similarity extraction method:").pack()
-        similarity_method_var = tk.StringVar()
-        similarity_method_var.set(self.mwcs_similarity_method)
-        ttk.Radiobutton(self.top_set_parameters, text="Zero-lag CCG", variable=similarity_method_var, value="zero_lag_cc").pack()
-        ttk.Radiobutton(self.top_set_parameters, text="Zero-lag PCC", variable=similarity_method_var, value="zero_lag_pcc").pack()
-
-        def done():
-            
-            try:
-                self.mwcs_reference = mwcs_reference_type_var.get()
-                self.mwcs_freq_min = float(entry_mwcs_min_freq.get())
-                self.mwcs_freq_max = float(entry_mwcs_max_freq.get())
-                self.mwcs_window_length = float(entry_mwcs_window.get())
-                self.mwcs_window_step = float(entry_mwcs_step.get())
-                self.mwcs_moving_start = float(entry_mwcs_start_time.get())
-                self.mwcs_error_max = float(entry_mwcs_max_err_filter.get())
-                self.mwcs_coherency_min = float(entry_mwcs_min_coh_filter.get())
-                self.mwcs_lagtime_ballistic = float(entry_mwcs_min_time_filter.get())
-                self.mwcs_lagtime_max = float(entry_mwcs_max_time_filter.get())
-                self.mwcs_abs_delay_time_limit = float(entry_mwcs_max_dt_filter.get())
-                self.mwcs_similarity_method = similarity_method_var.get()
-                self.mwcs_do_similarity_analysis = do_similarity_analysis_var.get()
-
-                self.status_var.set("New MWCS parameters saved.")
-                tk.messagebox.showinfo("SANBA", "Options saved successfully.")
-
-                self.top_set_parameters.destroy()
-
-            except ValueError:
-                tk.messagebox.showwarning("SANBA", "Invalid inputs: please make sure to enter valid values.")
-                self.top_set_parameters.tkraise()
-                return
-        
-        ttk.Button(self.top_set_parameters, text="Set", command=done, width=35).pack(pady=5)'''
 
     def create_project(self):
 
@@ -1399,8 +869,8 @@ class PSVM(ThemedTk):
         xa1 = xa1 / np.abs(xa1)
         xa2 = xa2 / np.abs(xa2)
         # Pad the normalized signals with zeros up to length Nz
-        xa1 = np.append(xa1, np.zeros((Nz - N), dtype=np.complex_))
-        xa2 = np.append(xa2, np.zeros((Nz - N), dtype=np.complex_))
+        xa1 = np.append(xa1, np.zeros((Nz - N), dtype=np.complex128))
+        xa2 = np.append(xa2, np.zeros((Nz - N), dtype=np.complex128))
         # Compute the FFT of the zero-padded signals
         xa1 = np.fft.fft(xa1)
         xa2 = np.fft.fft(xa2)
@@ -1698,7 +1168,7 @@ class PSVM(ThemedTk):
                         # Set the x and y labels
                         #self.ax.set_xlabel('Lag-time (s)')
                         #self.ax.set_ylabel('Start time')
-                        self.ax.set_xlabel('Lag-time (s)')
+                        self.ax.set_xlabel('Time lag (s)')
                         self.ax.set_ylabel('Time (hh:mm)')
 
                         # Add a colorbar
@@ -1910,7 +1380,7 @@ class PSVM(ThemedTk):
                         # Set the x and y labels
                         #self.ax.set_xlabel('Lag Time (s)')
                         #self.ax.set_ylabel('Start Time')
-                        self.ax.set_xlabel('Tempo de atraso (s)')
+                        self.ax.set_xlabel('Time lag (s)')
                         self.ax.set_ylabel('Horário (hh:mm)')
 
 
@@ -2114,16 +1584,6 @@ class PSVM(ThemedTk):
                         slope, intercept, std, n = linear_regression(time_axis_filtered,delay_time_filtered,
                                                 weights = 1/err_filtered, intercept_origin = False)
 
-                        '''# compute fitted values & residuals
-                        y_fit = slope * time_axis_filtered + intercept
-                        residuals = delay_time_filtered - y_fit
-                        # 1) R²
-                        ss_res = np.sum(residuals**2)
-                        ss_tot = np.sum((delay_time_filtered - np.mean(delay_time_filtered))**2)
-                        r2 = 1.0 - ss_res/ss_tot
-                        # 2) RMSE
-                        rmse = np.sqrt(np.mean(residuals**2))'''
-
                         # Check if slope and std are valid numbers
                         if np.isnan(slope) or np.isinf(slope) or np.isnan(std) or np.isinf(std):
                             print("regressão linear falhou")
@@ -2137,10 +1597,14 @@ class PSVM(ThemedTk):
                         timestamp = stack_stream[i].stats.starttime.timestamp
 
                         if self.mwcs_do_similarity_analysis:
-                            results = results.append({'timestamp': timestamp, 'dvv': dvv, 'dvv_std': dvv_std, 'similarity': corr_zero_lag}, ignore_index=True)
-                            similarity_results = similarity_results.append({'timestamp': timestamp, 'central_lags': similarity.keys(), 'similarity': similarity}, ignore_index=True)
+                            #results = results.append({'timestamp': timestamp, 'dvv': dvv, 'dvv_std': dvv_std, 'similarity': corr_zero_lag}, ignore_index=True)
+                            results = pd.concat([results, pd.DataFrame([{'timestamp': timestamp, 'dvv': dvv, 'dvv_std': dvv_std, 'similarity': corr_zero_lag}])], ignore_index=True)
+                            #similarity_results = similarity_results.append({'timestamp': timestamp, 'central_lags': similarity.keys(), 'similarity': similarity}, ignore_index=True)
+                            similarity_results = pd.concat([similarity_results, pd.DataFrame([{'timestamp': timestamp, 'central_lags': similarity.keys(), 'similarity': similarity}])], ignore_index=True)
+                            
                         else:
-                            results = results.append({'timestamp': timestamp, 'dvv': dvv, 'dvv_std': dvv_std}, ignore_index=True)
+                            #results = results.append({'timestamp': timestamp, 'dvv': dvv, 'dvv_std': dvv_std}, ignore_index=True)
+                            results = pd.concat([results, pd.DataFrame([{'timestamp': timestamp,'dvv': dvv,'dvv_std': dvv_std}])], ignore_index=True)
                             
                         # Create plot
                         if self.mwcs_plot:
@@ -2150,9 +1614,6 @@ class PSVM(ThemedTk):
         
                             timestamp = stack_stream[i].stats.starttime.timestamp
                             date = datetime.datetime.fromtimestamp(timestamp)
-                            
-                            #if date.strftime("%d/%m/%Y %H:%M:%S") != "16/10/2014 21:00:00": continue
-                            #if date.strftime("%d/%m/%Y %H:%M") != "21/09/2022 21:00": continue
                             
                             self.ax.clear()
                             self.ax2.clear()
@@ -2170,17 +1631,13 @@ class PSVM(ThemedTk):
                             self.ax.set_ylabel('Correlation')
 
                             delayTime = self.ax2.plot(time_axis_filtered, delay_time_filtered, 'o-', c="k",lw=0, label = "dt")
-                            #self.ax2.plot(time_axis_filtered, slope * time_axis_filtered + intercept, ls='--', c = 'r', label=f'dv/v = {dvv:.3f}%\nStd. deviation = {dvv_std:.3f}%\nCCGN(t=0) = {ccgn_zero_lag:.3f}')
-                            #linReg = self.ax2.plot(time_axis_filtered, slope * time_axis_filtered + intercept, ls='--', c = 'k', label=f'dv/v = {dvv:.3f}%\nStd. deviation = {dvv_std:.3f}%')
-                            #linReg = self.ax2.plot(time_axis_filtered, slope * time_axis_filtered + intercept, ls='--', c = 'k', label=f'dv/v = {dvv:.3f}% (±{dvv_std:.3f}%)')
                             linReg = self.ax2.plot(time_axis_filtered, slope * time_axis_filtered + intercept, ls='--', c = 'k', label=f'dv/v = {dvv:.2f}% (±{dvv_std:.3f}%)')
                             
-                            self.ax.set_xlabel('Lag-time (s)')
+                            self.ax.set_xlabel('Time lag (s)')
                             self.ax2.set_ylabel('dt (s)')
                             self.ax2.set_ylim([-self.mwcs_abs_delay_time_limit*1.25,self.mwcs_abs_delay_time_limit*1.25])
 
-                            self.ax.set_title(f'MWCS | {station1}.{channel1} - {station2}.{channel2} | {date.strftime("%d/%m/%Y %H:%M:%S")} | Stack {self.stack_window_length_days} day(s) | {self.mwcs_freq_min} - {self.mwcs_freq_max} Hz')
-                            #self.ax.set_title(f"Estiramento = {STRETCH_PCTS[i]:.1f}%")
+                            self.ax.set_title(f'MWCS | {station1}.{channel1} - {station2}.{channel2} | {date.strftime("%d/%m/%Y %H:%M:%S")} | Stack of {self.stack_window_length_days} day(s) | {self.mwcs_freq_min} - {self.mwcs_freq_max} Hz')
                             lns = cer + cem + delayTime + linReg
                             labels = [l.get_label() for l in lns]
                             self.ax.legend(lns, labels, loc="upper right", fontsize=9)
@@ -2190,22 +1647,6 @@ class PSVM(ThemedTk):
 
                             self.ax.figure.canvas.draw()
                             self.ax2.figure.canvas.draw()
-
-                            #print(f'\n{date.strftime("%d/%m/%Y %H:%M:%S")}\t{station1}.{channel1}-{station2}.{channel2}\t{self.mwcs_freq_min}-{self.mwcs_freq_max}\t{self.stack_window_length_days}\t{dvv:.3f}\t{dvv_std:.3f}\n')
-
-                            '''line = (
-                                f"{date.strftime('%d/%m/%Y %H:%M:%S')}\t"
-                                f"{station1}.{channel1}-{station2}.{channel2}\t"
-                                f"{self.mwcs_freq_min}-{self.mwcs_freq_max}\t"
-                                f"{self.stack_window_length_days}\t"
-                                f"{dvv:.3f}\t"
-                                f"{dvv_std:.3f}\n"
-                            )
-
-                            with open(os.path.join(out_dir, "mwcs_analise_estabilidade.txt"), 'a') as fh:
-                                fh.write(line)'''
-                                
-                            #break
                             
                     except Exception as e:
                         print(e)
@@ -2575,622 +2016,9 @@ class PSVM(ThemedTk):
             )
             self.progress["value"] += 1
             self.progress.update_idletasks()
-        
-    '''def plot_dvv(self):
-        if self.current_project_path is None:
-            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
-            return
-
-        if self.pairs is None:
-            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
-            return
-        
-        plot_similarity = tk.messagebox.askyesno("SANBA", "Plot similarity in second y axis?")
-        plot_separately = tk.messagebox.askyesno("SANBA", "Plot dv/v separately for each pair of stations?")
-        
-        #plot_similarity = False
-        #plot_separately = True
-        
-        self.ax.clear()
-        self.ax2.clear()
-
-        self.progress["value"] = 0
-        self.progress["maximum"] = len(self.pairs)
-
-        if self.do_crosscomponent_analysis:
-            for pair in self.pairs:
-                station1, station2 = pair
-                dir1 = os.path.join(os.path.join(self.current_project_path, "data"), station1)
-                dir2 = os.path.join(os.path.join(self.current_project_path, "data"), station2)
-                channels1 = [item for item in os.listdir(dir1)]
-                channels2 = [item for item in os.listdir(dir2)]
-                #channel_pairs = [(ch1, ch2) for ch1 in channels1 for ch2 in channels2]
-                channel_pairs = [(ch1, ch2) for ch1 in channels1 for ch2 in channels2 if ch1 <= ch2]
-        else:
-            channel_pairs = [(self.channel_code, self.channel_code)]
-            
-        def generate_random_colors(N):
-            colors = []
-            for _ in range(N):
-                color = np.random.rand(3,)  # Generate a random RGB color
-                colors.append(color)
-            return colors
-
-        random_colors = generate_random_colors(len(self.pairs)*len(channel_pairs))
-        color_index = 0
-        
-        for i, pair in enumerate(self.pairs):
-
-            for j, channel_pair in enumerate(channel_pairs):
-                
-                station1, station2 = pair
-                channel1, channel2 = channel_pair
-
-                self.status_var.set(f"Plotting the dv/v series for {station1} {channel1} and {station2} {channel2}")
-                print(f"Plotting dvv for {station1} {channel1} and {station2} {channel2} ({self.mwcs_freq_min}-{self.mwcs_freq_max}Hz)...")
-
-                out_dir = os.path.join(self.current_project_path, "out")
-                dvv_path = os.path.join(out_dir, 'dvv', f'{station1}_{station2}_{channel1}_{channel2}')
-                csv_file = os.path.join(dvv_path, f'{station1}_{station2}_{channel1}_{channel2}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_dvv.csv')
-                
-                df = pd.read_csv(csv_file)
-                
-                try:
-                    df['timestamp'] = pd.to_datetime(df['timestamp'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
-                    if df['timestamp'].isnull().any():
-                        raise ValueError("Some dates could not be parsed. Check the format in the CSV file.")
-                except Exception as e:
-                    print(f"Error parsing dates: {e}")
-                    tk.messagebox.showerror("Date Parsing Error", f"Error parsing dates in {csv_file}: {e}")
-                    continue
-                
-                df['gap'] = df['timestamp'].diff().dt.total_seconds()
-                df['gap'].iloc[0] = 0
-                df['group'] = (df['gap'] > self.plot_dvv_gap_limit).cumsum()
-
-                if plot_separately:
-                    self.ax.clear()
-                    self.ax2.clear()
-                
-                for name, group in df.groupby('group'):
-
-                    if self.mwcs_reference == "following":
-                        dvv_plot = np.cumsum(group['dvv'])
-                    else:
-                        dvv_plot = group['dvv']
-                        
-                    if plot_separately:
-
-                        if plot_similarity:
-                            #self.ax.plot(group['timestamp'], dvv_plot, c = random_colors[color_index], label = "dv/v")
-                            self.ax.plot(group['timestamp'], dvv_plot, c = "k", label = "dv/v")
-                            #self.ax2.plot(group['timestamp'], group['similarity'], ls = "--", c = random_colors[color_index], label = "Similarity")
-                            self.ax2.plot(group['timestamp'], group['similarity'], ls = "--", c = "k", label = "Similarity")
-                        else:
-                            #self.ax.plot(group['timestamp'], dvv_plot, c = random_colors[color_index])
-                            self.ax.plot(group['timestamp'], dvv_plot, c = "k")
-                    else:
-                        #self.ax.plot(group['timestamp'], dvv_plot, c = random_colors[color_index], label=f"{station1} {channel1}-{station2} {channel2}")
-                        #self.ax.plot(group['timestamp'], dvv_plot, c = random_colors[color_index])
-                        #self.ax.plot(group['timestamp'], group['similarity'], c = random_colors[color_index])#, label=f"Similarity {station1} {channel1}-{station2} {channel2}")
-                        self.ax.plot(group['timestamp'], group['similarity'], c = "k")#, label=f"Similarity {station1} {channel1}-{station2} {channel2}")
-                        if plot_similarity:
-                            #self.ax2.plot(group['timestamp'], group['similarity'], ls = "--", c = random_colors[color_index], label=f"Similarity {station1} {channel1}-{station2} {channel2}")
-                            self.ax2.plot(group['timestamp'], group['similarity'], ls = "--", c = "k", label=f"Similarity {station1} {channel1}-{station2} {channel2}")
-                        
-                    self.ax.fill_between(group['timestamp'], dvv_plot - group['dvv_std'], dvv_plot + group['dvv_std'], color = random_colors[color_index], alpha=.25)
-
-                self.ax.set_ylabel("dv/v (%)")
-
-                color_index += 1
-                
-                if plot_similarity:
-                    self.ax2.set_ylabel("Similarity")
-                    #self.ax2.set_ylim(min(group['similarity'])*2, max(group['similarity'])*2)
-                    
-                self.ax.grid(True)  # Add a grid
-                # Modify the plot aesthetics
-                self.ax.spines['right'].set_visible(False)
-                self.ax.spines['top'].set_visible(False)
-                # Adjust the date format on the x-axis
-                self.ax.xaxis.set_major_locator(plt.MaxNLocator(6))
-                self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y\n%H:%M'))  # Add the hour and minute below the date
-                
-                # Set the x-axis limits to the range of the actual dates
-                min_date, max_date = df['timestamp'].min(), df['timestamp'].max()
-                self.ax.set_xlim(min_date, max_date)
-
-                if plot_similarity:
-                    self.ax.legend(loc="upper right", fontsize='small')
-                    self.ax2.legend(loc="lower right", fontsize='small')
-                    
-                if not plot_separately:
-                    self.ax.legend(loc="best", fontsize='small')
-                else:
-                    self.ax.set_title(f"{station1} {channel1} - {station2} {channel2} | {df['timestamp'].iloc[0].strftime('%d/%m/%Y')} - {df['timestamp'].iloc[-1].strftime('%d/%m/%Y')} | {self.mwcs_freq_min}-{self.mwcs_freq_max} Hz")
-                
-                self.ax.figure.canvas.draw()
-
-                if plot_separately:
-                    self.fig.savefig(os.path.join(dvv_path, f'{station1}_{station2}_{channel1}_{channel2}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_dvv.png'), dpi=300)
-
-                self.status_var.set(f"Completed plotting dv/v series for {station1} {channel1} and {station2} {channel2} ({self.mwcs_freq_min}-{self.mwcs_freq_max} Hz)")
-                self.progress.update_idletasks()
-                self.progress["value"] += 1
-            
-            ####
-
-            p_chuva = "D:\\ARTIGOS_CIENTÍFICOS\\dvv_Itabirito\\proc_ITBR\\chuva\\"
-            with open(p_chuva+"chuva_ITBR.txt", "r") as chuvaFile:
-                linhas_chuva = chuvaFile.readlines()[1:]
-
-            mms = []
-            t_chuva = []
-
-            for linha in linhas_chuva:
-                l = linha.split(" ")
-                data = l[0]
-                dia = data.split("/")[0]
-                mes = data.split("/")[1]
-                ano = data.split("/")[2]
-                horario = l[1]
-                hora = horario.split(":")[0]
-                minuto = horario.split(":")[1]
-                segundo = 0
-                mm = float(l[2])
-                mms.append(mm)
-                t_chuva.append(datetime.datetime(int(ano), int(mes), int(dia), int(hora), int(minuto), int(segundo)))
-                              
-            t_chuva = date2num(t_chuva)
-            self.ax2.bar(t_chuva, mms, 0.1, color= "blue", alpha = 1, label = "Rainfall events")
-            self.ax2.set_ylabel("Precipitation (mm)")
-            self.ax2.legend(loc="lower right",frameon=True)
-            self.ax.figure.canvas.draw()
-            ####
-            '''
-            
-    '''def spatial_average(self):
-
-        if self.current_project_path is None:
-            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
-            return
-
-        if self.pairs is None:
-            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
-            return
-        
-        #for pair in self.pairs:
-
-        out_dir = os.path.join(self.current_project_path, "out")
-        dvv_dir = os.path.join(out_dir, 'dvv')
-        avg_dvv_dir = os.path.join(out_dir, 'average_dvv')
-
-        if not os.path.exists(avg_dvv_dir):
-            os.makedirs(avg_dvv_dir)
-                        
-        station_dirs = [d for d in os.listdir(dvv_dir) if os.path.isdir(os.path.join(dvv_dir, d))]
-        
-        station_dvv_data = {}  # A dictionary to hold all station's dvv data
-
-        if self.spatial_average_gap_limit < 60:
-            resampling_interval = str(self.spatial_average_gap_limit) + 'S'
-        elif self.spatial_average_gap_limit < 3600:
-            resampling_interval = str(self.spatial_average_gap_limit // 60) + 'T'
-        else:
-            resampling_interval = str(self.spatial_average_gap_limit // 3600) + 'H'
-
-        # Collecting all station DVV data
-        for station_dir in station_dirs:
-            station1, station2 = station_dir.split('_')
-
-            use_dir = False
-            
-            for pair in self.pairs:
-                if station1 not in pair or station2 not in pair:
-                    use_dir = False
-                else:
-                    use_dir = True
-            
-            if use_dir:
-                csv_file = os.path.join(dvv_dir, station_dir, f'{station1}_{station2}_dvv.csv')
-                df = pd.read_csv(csv_file)
-                df['timestamp'] = pd.to_datetime(df['timestamp'], format='%d/%m/%Y %H:%M:%S')
-                df.set_index('timestamp', inplace=True)
-                df = df.resample(resampling_interval).mean()  # Resample the data to gap_limit intervals
-
-                for station in [station1, station2]:
-                    if station not in station_dvv_data:
-                        station_dvv_data[station] = []
-                    station_dvv_data[station].append((station_dir, df['dvv']))
-
-        # Averaging for each station
-        for station, dvv_list in station_dvv_data.items():
-            pair_list, dvv_data_list = zip(*dvv_list)  # split the tuples into two lists
-            station_avg_df = pd.concat(dvv_data_list, axis=1)  # concatenate the dvv data
-            station_avg_df['avg_dvv'] = station_avg_df.mean(axis=1)
-            station_avg_df = station_avg_df[['avg_dvv']]  # Keep only the 'avg_dvv' column
-
-            #self.ax.clear()
-            #self.ax2.clear()
-
-            # Plot the dvv of each pair that contributed to the average dvv of the station
-            for pair, dvv in dvv_list:
-                self.ax.plot(dvv.index, dvv, label=f"{pair.replace('AM.', '').replace('_','-')}", alpha=0.5, lw=1)
-
-            #self.ax.plot(station_avg_df.index, station_avg_df['avg_dvv'], color='k', label = f"{station.replace('AM.', '')} average")
-            
-            if self.spatial_average_median_filter:
-                # Filter the avg dvv
-                station_avg_df['filtered_avg_dvv'] = station_avg_df['avg_dvv'].rolling(self.spatial_average_filter_window_size, center=True).median()
-                # Plot the filtered avg dvv
-                self.ax.plot(station_avg_df.index, station_avg_df['filtered_avg_dvv'], color='magenta', label = f"{station.replace('AM.', '')} filtered", lw = 5)
-                station_avg_df['filtered_avg_dvv'].to_csv(os.path.join(avg_dvv_dir, f'{station}_avg_filtered_dvv.csv'))
-
-            station_avg_df['avg_dvv'].to_csv(os.path.join(avg_dvv_dir, f'{station}_avg_dvv.csv'))
-
-            self.ax.set_ylabel("dv/v (%)")
-            self.ax.grid(True)  
-            self.ax.spines['right'].set_visible(False)
-            self.ax.spines['top'].set_visible(False)
-            self.ax.xaxis.set_major_locator(plt.MaxNLocator(6))
-            self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y\n%H:%M'))  
-            self.ax.set_title(f"{station.replace('AM.', '')} average")
-            #ax.legend()
-            self.ax.legend(ncol=len(dvv_list), loc='best')
-            self.ax.set_ylim(min(station_avg_df['avg_dvv'])*2, max(station_avg_df['avg_dvv'])*2)
-
-            self.ax.figure.canvas.draw()
-
-        # Averaging all station DVV data
-        general_dvv_list = [dvv for dvv_list in station_dvv_data.values() for dvv in dvv_list]
-        pair_list, dvv_data_list = zip(*general_dvv_list)  # split the tuples into two lists
-        general_avg_df = pd.concat(dvv_data_list, axis=1)  # concatenate the dvv data
-        general_avg_df['avg_dvv'] = general_avg_df.mean(axis=1)
-        general_avg_df = general_avg_df[['avg_dvv']]  # Keep only the 'avg_dvv' column
-
-        #self.ax.clear()
-        #self.ax2.clear()
-
-        for station, dvv_list in station_dvv_data.items():
-            for pair, dvv in dvv_list:
-                self.ax.plot(dvv.index, dvv, alpha=0.5, lw=.5)#, label=f"{pair.replace('AM.', '').replace('_','-')}")
-                
-        self.ax.plot(general_avg_df.index, general_avg_df['avg_dvv'], color='k', label = "Network average")
-
-        if self.spatial_average_median_filter:
-            # Filter the avg dvv
-            general_avg_df['filtered_avg_dvv'] = general_avg_df['avg_dvv'].rolling(self.spatial_average_filter_window_size, center=True).median()
-            # Plot the filtered avg dvv
-            self.ax.plot(general_avg_df.index, general_avg_df['filtered_avg_dvv'], color='magenta', label = "Network average (median filter)", lw = 1)
-            general_avg_df[['filtered_avg_dvv']].to_csv(os.path.join(avg_dvv_dir, 'network_avg_filtered_dvv.csv'))
-        
-        self.ax.set_ylabel("dv/v (%)")
-        self.ax.grid(True)
-        self.ax.legend(ncol=2, loc='best')
-        self.ax.spines['right'].set_visible(False)
-        self.ax.spines['top'].set_visible(False)
-        self.ax.xaxis.set_major_locator(plt.MaxNLocator(6))
-        self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y\n%H:%M'))  
-        self.ax.set_ylim(min(general_avg_df['avg_dvv'])*2, max(general_avg_df['avg_dvv'])*2)
-
-        self.ax.figure.canvas.draw()
-
-        general_avg_df[['avg_dvv']].to_csv(os.path.join(avg_dvv_dir, 'network_avg_dvv.csv'))
-
-        self.status_var.set(f"Completed plotting average dv/v series")'''
-            
-    '''def plot_dvv_filter(out_dir, gap_limit, filter_window_size, plot_type, fig_size, years=[], intervals=None):
-        # List all directories in out_dir
-        pair_dirs = [d for d in os.listdir(out_dir) if os.path.isdir(os.path.join(out_dir, d))]
-
-        # Create a list to hold the filtered DVV dataframes
-        filtered_dvv_dfs = []
-
-        for pair_dir in pair_dirs:
-            # Read the CSV file
-            df = pd.read_csv(os.path.join(out_dir, pair_dir, pair_dir + "_dvv.csv"))
-            df['timestamp'] = pd.to_datetime(df['timestamp'], format="%d/%m/%Y %H:%M:%S")
-            df.set_index('timestamp', inplace=True)
-
-            # Apply the median filter
-            df['dvv_filtered'] = df['dvv'].rolling(filter_window_size, center=True).median()
-
-            # Store the dataframe in filtered_dvv_dfs
-            filtered_dvv_dfs.append(df)
-
-        # Convert the gap_limit to a timedelta
-        gap_limit_td = pd.to_timedelta(gap_limit)
-            
-        # Start plotting
-        if plot_type == "default":
-
-            fig, axs = plt.subplots(len(filtered_dvv_dfs) + 1, figsize=fig_size, sharex=True)#, sharey=True)
-
-            # Plot original and filtered data
-            for i, (pair_dir, df) in enumerate(zip(pair_dirs, filtered_dvv_dfs)):
-                # Separate df into continuous segments
-                gaps = df.index.to_series().diff() > gap_limit_td
-                dfs = [v for k, v in df.groupby(gaps.cumsum())]
-
-                # Plot each segment separately
-                for idx, df in enumerate(dfs):
-                    if idx == 0:
-                        axs[i].plot(df.index, df['dvv'], label=f"{pair_dir.replace('AM.','').replace('_','-')}", c = "gray")
-                        axs[i].plot(df.index, df['dvv_filtered'], c = "k", lw = .5)
-                    else:
-                        axs[i].plot(df.index, df['dvv'], lw = 1, c = "gray")
-                        axs[i].plot(df.index, df['dvv_filtered'], c = "k", lw = .5)
-                        
-                axs[i].grid(lw=.3)
-                axs[i].set_ylabel("dv/v (%)")
-                axs[i].legend(loc='lower right')
-                
-            # Create a colormap
-            color_map = cm.get_cmap('brg', len(pair_dirs)) # 'tab10' is a colormap suitable for categorical data
-
-            # Plot all filtered data together
-            for pair_idx, (pair_dir, df) in enumerate(zip(pair_dirs, filtered_dvv_dfs)):
-                # Get a unique color for this pair_dir from the colormap
-                pair_color = color_map(pair_idx)
-
-                # Separate df into continuous segments
-                gaps = df.index.to_series().diff() > gap_limit_td
-                dfs = [v for k, v in df.groupby(gaps.cumsum())]
-
-                # Plot each segment separately with the pair's color
-                for idx, df in enumerate(dfs):
-                    if idx == 0:
-                        axs[-1].plot(df.index, df['dvv_filtered'], label=pair_dir.replace('AM.','').replace('_','-'), color=pair_color)
-                    else:
-                        axs[-1].plot(df.index, df['dvv_filtered'], color=pair_color)
-
-            if intervals:
-                for start_date, end_date in intervals:
-                    start_date = pd.to_datetime(start_date, dayfirst=True)
-                    end_date = pd.to_datetime(end_date, dayfirst=True)
-                    #axs[-1].fill_betweenx(axs[-1].get_ylim(), start_date, end_date, color='gray', alpha=0.2)
-                    axs[-1].axvspan(start_date, end_date, color='gray', alpha=0.2)
-            
-            axs[-1].grid(lw=.3)
-            axs[-1].set_ylabel("dv/v (%)")
-            axs[-1].xaxis.set_major_formatter(mdates.DateFormatter('%b/%Y')) 
-            axs[-1].legend(ncol=len(pair_dirs), loc='lower right', prop = {'size': 8})
-            plt.tight_layout()
-            fig.savefig(os.path.join(out_dir,"dvv_filtered.png"),dpi=300) 
-            plt.show()
-
-        elif plot_type == "by_year":
-            for df in filtered_dvv_dfs:
-                fig, axs = plt.subplots(len(years), figsize=fig_size, sharex=True)
-
-                # Filter data by year and plot
-                for i, year in enumerate(years):
-                    df_year = df[df.index.year == year]
-
-                    # Separate df_year into continuous segments
-                    gaps = df_year.index.to_series().diff() > gap_limit_td
-                    dfs = [v for k, v in df_year.groupby(gaps.cumsum())]
-
-                    # Plot each segment separately
-                    for df in dfs:
-                        axs[i].plot(df.index, df['dvv'], label=f"{pair_dir} Original")
-                        axs[i].plot(df.index, df['dvv_filtered'], label=f"{pair_dir} Filtered")
-
-                    axs[i].legend()
-
-                plt.tight_layout()
-                plt.show()'''
-
-    '''def plot_comparison(dvv_file, comparison_files):
-        dvv_df = pd.read_csv(dvv_file, parse_dates=[0], index_col=0)
-
-        fig, ax1 = plt.subplots(figsize=(16,4))
-
-        ax1.plot(dvv_df.index, dvv_df['filtered_avg_dvv'], color='k', label = "DVV")
-        ax1.set_ylabel("DVV (%)")
-        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y\n%H:%M')) 
-
-        for comparison_file in comparison_files:
-            df = pd.read_excel(comparison_file)
-            df.columns = ['Data/Hora', 'Chuva Horária (mm)']
-            df['Data/Hora'] = pd.to_datetime(df['Data/Hora'], dayfirst=True)
-            df.set_index('Data/Hora', inplace=True)
-
-            ax2 = ax1.twinx() 
-            ax2.plot(df.index, df['Chuva Horária (mm)'], alpha=0.5, label=comparison_file.split('/')[-1]) # assuming file path delimiter is '/'
-            ax2.set_ylabel("Measurement")
-
-        ax1.grid(True)
-        ax1.spines['right'].set_visible(False)
-        ax1.spines['top'].set_visible(False)
-        ax1.xaxis.set_major_locator(plt.MaxNLocator(6))
-
-        #fig.tight_layout() 
-        plt.title("DVV and Measurements Comparison")
-        fig.legend(loc="upper left", bbox_to_anchor=(0,1), bbox_transform=ax1.transAxes)
-        plt.show()'''
-
-    '''def run_full(settings_file):
-
-        t00 = time.time()
-        
-        settings_df = pd.read_csv(settings_file,sep=' ', index_col=0, header=None)
-
-        data_dir = str(settings_df.loc['data_dir'].values[0])
-        out_dir = str(settings_df.loc['out_dir'].values[0])
-        resp_dir = str(settings_df.loc['resp_dir'].values[0])
-        corr_type = str(settings_df.loc['corr_type'].values[0])
-        xcorr_window_size = eval(settings_df.loc['xcorr_window_size'].values[0])
-        xcorr_overlap = eval(settings_df.loc['xcorr_overlap'].values[0])
-        xcorr_resample_rate = eval(settings_df.loc['xcorr_resample_rate'].values[0])
-        xcorr_min_freq = eval(settings_df.loc['xcorr_min_freq'].values[0])
-        xcorr_max_freq = eval(settings_df.loc['xcorr_max_freq'].values[0])
-        xcorr_max_lag = eval(settings_df.loc['xcorr_max_lag'].values[0])
-        xcorr_remove_response = int(settings_df.loc['xcorr_remove_response'].values[0])
-        xcorr_response_type = str(settings_df.loc['xcorr_response_type'].values[0])
-        xcorr_snr_threshold = eval(settings_df.loc['xcorr_snr_threshold'].values[0])
-        xcorr_plot = int(settings_df.loc['xcorr_plot'].values[0])
-        stack_window_length_days = eval(settings_df.loc['stack_window_length_days'].values[0])
-        stack_plot = int(settings_df.loc['stack_plot'].values[0])
-        mwcs_plot = int(settings_df.loc['mwcs_plot'].values[0])
-        mwcs_freq_min = eval(settings_df.loc['mwcs_freq_min'].values[0])
-        mwcs_freq_max = eval(settings_df.loc['mwcs_freq_max'].values[0])
-        mwcs_window_length = eval(settings_df.loc['mwcs_window_length'].values[0])
-        mwcs_window_step = eval(settings_df.loc['mwcs_window_step'].values[0])
-        mwcs_tmin = eval(settings_df.loc['mwcs_tmin'].values[0])
-        mwcs_coherency_min = eval(settings_df.loc['mwcs_coherency_min'].values[0])
-        mwcs_error_max = eval(settings_df.loc['mwcs_error_max'].values[0])
-        mwcs_tmin_filter = eval(settings_df.loc['mwcs_tmin_filter'].values[0])
-        mwcs_tmax_filter = eval(settings_df.loc['mwcs_tmax_filter'].values[0])
-        mwcs_abs_delay_time_limit = eval(settings_df.loc['mwcs_abs_delay_time_limit'].values[0])
-        mwcs_reference = str(settings_df.loc['mwcs_reference'].values[0])
-        plot_dvv_gap_limit = eval(settings_df.loc['plot_dvv_gap_limit'].values[0])
-        spatial_average_gap_limit = eval(settings_df.loc['spatial_average_gap_limit'].values[0])
-        spatial_average_median_filter = int(settings_df.loc['spatial_average_median_filter'].values[0])
-        spatial_average_filter_window_size = str(settings_df.loc['spatial_average_filter_window_size'].values[0])
-        spatial_average_fig_size_x = eval(settings_df.loc['spatial_average_fig_size_x'].values[0])
-        spatial_average_fig_size_y = eval(settings_df.loc['spatial_average_fig_size_y'].values[0])
-        
-        for pair in tqdm(get_pairs(data_dir=data_dir, format=corr_type), desc="\nProcessing pairs\n"):
-           
-            matching_dates = correlation(data_dir=data_dir,out_dir=out_dir,pair=pair)
-            
-            xcorr(data_path=data_dir, out_path=out_dir, resp_path=resp_dir, station_pair=pair, matching_dates=matching_dates,
-                  window_size=xcorr_window_size, overlap=xcorr_overlap, resample_rate=xcorr_resample_rate,
-                  min_freq=xcorr_min_freq, max_freq=xcorr_max_freq, max_lag=xcorr_max_lag, remove_response=xcorr_remove_response,
-                  response_type = xcorr_response_type, snr_threshold = xcorr_snr_threshold, plot=xcorr_plot)
-
-            stack(data_dir=data_dir, out_dir=out_dir, station_pair=pair, window_size=xcorr_window_size,
-                  window_length_days=stack_window_length_days, plot=stack_plot, max_lag = xcorr_max_lag)
-
-            mwcs(data_dir=data_dir, out_dir=out_dir, pair=pair, plot=mwcs_plot, freq_min=mwcs_freq_min, freq_max=mwcs_freq_max,
-                 sampling_freq=xcorr_resample_rate, window_length=mwcs_window_length, window_step=mwcs_window_step, 
-                 tmin = mwcs_tmin, coherency_min=mwcs_coherency_min, error_max=mwcs_error_max, tmin_filter=mwcs_tmin_filter,
-                 tmax_filter=mwcs_tmax_filter, abs_delay_time_limit=mwcs_abs_delay_time_limit, reference=mwcs_reference)
-
-            plot_dvv(data_dir=data_dir, out_dir=out_dir, pair=pair, gap_limit=plot_dvv_gap_limit)
-
-        spatial_average(out_dir=out_dir, gap_limit = spatial_average_gap_limit, median_filter = spatial_average_median_filter,
-                        filter_window_size = spatial_average_filter_window_size,
-                        fig_size=(spatial_average_fig_size_x,spatial_average_fig_size_y))
-
-        tff = time.time()
-        execution_timee = tff - t00
-        print(f"The execution of ALL took {execution_timee} seconds.")
-
-    def dvvs2map(folder_path, station_names, coord_file_path, start_date_time, end_date_time):
-        # Load the station coordinates
-        coords = pd.read_csv(coord_file_path)
-        
-        dvvs = []
-        x_coords = []
-        y_coords = []
-        
-        # Convert string datetime to pandas datetime for easier comparison
-        start_dt = pd.to_datetime(start_date_time, format='%d/%m/%Y %H:%M:%S')
-        end_dt = pd.to_datetime(end_date_time, format='%d/%m/%Y %H:%M:%S')
-        
-        # Iterate through each station
-        for station in station_names:
-            # Load dvv data
-            dvv_data = pd.read_csv(os.path.join(folder_path, f"{self.network_code}.{station}_avg_dvv.csv"))
-            
-            # Convert Timestamps to pandas datetime for filtering
-            dvv_data['timestamp'] = pd.to_datetime(dvv_data['timestamp'], format='%Y-%m-%d %H:%M:%S')
-            
-            # Filter data within the date range
-            dvv_filtered = dvv_data[(dvv_data['timestamp'] >= start_dt) & (dvv_data['timestamp'] <= end_dt)]
-            
-            if not dvv_filtered.empty:
-                dvvs.append(dvv_filtered['avg_dvv'].mean())
-                
-                x = coords.loc[coords['Estacao'] == station]['X(m)'].values[0]
-                y = coords.loc[coords['Estacao'] == station]['Y(m)'].values[0]
-                
-                x_coords.append(x)
-                y_coords.append(y)
-            else:
-                print(f"No data for station {station} within the specified date range.")
-        
-        # Read the GeoTiff data
-        with rasterio.open('C:/Users/Neogeo/Downloads/GeoTIFF_GIS_Itabirito_GeoTrack.tiff') as src:
-            # Read all the bands
-            geotiff_data = src.read()
-
-            # If there are 4 bands, assume it's RGBA and discard the alpha channel
-            if geotiff_data.shape[0] == 4:
-                geotiff_data = geotiff_data[:3]
-
-            # If there are 3 bands for RGB, transpose the data to shape (height, width, channels)
-            if geotiff_data.shape[0] == 3:
-                geotiff_data = np.transpose(geotiff_data, (1, 2, 0))
-            else:
-                raise ValueError("The GeoTIFF does not have 3 or 4 bands for RGB/RGBA.")
-
-            # Define the extent
-            transform = src.transform
-            extent = (transform[2], transform[2] + src.width * transform[0],
-                      transform[5] + src.height * transform[4], transform[5])
-        
-        # Create the contour plot
-        fig, ax = plt.subplots(figsize=(12,5))
-
-        # Create a grid to interpolate data
-        grid_x, grid_y = np.mgrid[min(x_coords):max(x_coords):100j, min(y_coords):max(y_coords):100j]
-
-        # Interpolate PGV and PGA data onto the grid
-        grid_dvvs = griddata((x_coords, y_coords), dvvs, (grid_x, grid_y), method='cubic')
-
-        # Clip interpolated data to the actual min and max values of the original data
-        grid_dvvs = np.clip(grid_dvvs, np.min(dvvs), np.max(dvvs))
-
-        ax.imshow(geotiff_data, extent=extent, aspect='equal')
-
-        # PGV contour plot
-        dvv_contour = ax.contourf(grid_x, grid_y, grid_dvvs, levels=30, cmap = "jet", alpha = 1)
-        ax.scatter(x_coords, y_coords, color='yellow', marker = "v") # station points
-
-        buffer = 15
-        ax.set_xlim(min(x_coords) - buffer/5, max(x_coords) + buffer)
-        ax.set_ylim(min(y_coords) - buffer/5, max(y_coords) + buffer)
-
-        cbar = fig.colorbar(dvv_contour, ax=ax, orientation='vertical', shrink=.65)
-        cbar.set_label('dv/v (%)')
-
-        # Label each point with the corresponding station name
-        for x, y, label in zip(x_coords, y_coords, station_names):
-            ax.text(x, y, label, color = "w", fontsize=9, ha='right', va='bottom')
-
-        ax.set_xlabel("Leste (m)")
-        ax.set_ylabel("Norte (m)")
-
-        ax.set_title(f"dv/v médios entre {start_date_time} e {end_date_time}", fontsize=10)
-
-        x_ticks = ax.get_xticks()
-        y_ticks = ax.get_yticks()
-        ax.set_xticks(x_ticks)
-        ax.set_xticklabels([f'{int(tick)}' for tick in x_ticks], rotation=45, ha='right', fontsize=8)
-        ax.set_yticks(y_ticks)
-        ax.set_yticklabels([f'{int(tick)}' for tick in y_ticks], fontsize=8)
-
-        ax.grid(alpha=.5)
-
-        plt.tight_layout()
-        
-        # Save the figure
-        fig_name = f"{folder_path}/dvvMap_{start_date_time.replace('/', '_').replace(':', '-')}_{end_date_time.replace('/', '_').replace(':', '-')}.png"
-        plt.savefig(fig_name, dpi=300)  # Save the figure as a PNG image with 300 dpi
-
-        # Save the data as CSV
-        data = {'x_coords': x_coords, 'y_coords': y_coords, 'dvvs': dvvs}
-        df = pd.DataFrame(data)
-        csv_name = f"{folder_path}/dvvData_{start_date_time.replace('/', '_').replace(':', '-')}_{end_date_time.replace('/', '_').replace(':', '-')}.csv"
-        df.to_csv(csv_name, index=False)
-
-        plt.show()'''
-
 
 if __name__ == "__main__":
-    app = PSVM()
-    app.mainloop()
+    root = tk.Tk()
+    app = PSVM(root)
+    root.mainloop()
     
