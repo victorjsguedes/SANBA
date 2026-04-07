@@ -1,84 +1,157 @@
 import sys
 import tkinter as tk
-from tkinter import ttk
-#from ttkthemes import ThemedTk
-from tkinter import filedialog
+from tkinter import ttk, filedialog
 from PIL import ImageTk, Image
 import os
 from natsort import natsorted
 from obspy import read, Trace, Stream
-from obspy.core.inventory import read_inventory
-from obspy.signal.cross_correlation import correlate
-from obspy.signal.filter import bandpass
 from matplotlib import pyplot as plt
-from obspy.signal.invsim import cosine_taper
-from obspy.signal.util import _npts2nfft
-from obspy import UTCDateTime
-from scipy.fftpack import fft, ifft
-from scipy.signal import hilbert
+import matplotlib.dates as mdates
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from scipy.signal import hilbert, correlate, fftconvolve
 import numpy as np
-from msnoise.move2obspy import mwcs as msnoise_mwcs #whiten
-from numpy import isnan, isinf, savez
-import time
+from numpy import isnan, isinf
+from msnoise.move2obspy import mwcs as msnoise_mwcs
 import datetime
 from obspy.signal.regression import linear_regression
 import pandas as pd
-from matplotlib.dates import date2num, num2date
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
-from matplotlib import cm
-from matplotlib.collections import LineCollection
-from matplotlib.colors import Normalize
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from tqdm import tqdm, trange
 import warnings
 import gc
-from scipy.signal import medfilt
-warnings.filterwarnings('ignore')
 from obspy.io.mseed.headers import InternalMSEEDWarning
-warnings.filterwarnings('ignore', category=InternalMSEEDWarning)
 from pandas.plotting import register_matplotlib_converters
-register_matplotlib_converters()
 from io import BytesIO
 from re import sub
-from scipy.interpolate import griddata, interp2d
-#import rasterio
+from scipy.interpolate import griddata
 from threading import Thread
-import glob
-from scipy.signal import correlate, fftconvolve
 
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tip_window = None
+
+        widget.bind("<Enter>", self.show_tip)
+        widget.bind("<Leave>", self.hide_tip)
+
+    def show_tip(self, event=None):
+        if self.tip_window or not self.text:
+            return
+
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+
+        frame = ttk.Frame(tw, style="Tooltip.TFrame")
+        frame.pack()
+
+        label = ttk.Label(frame, text=self.text, style="Tooltip.TLabel")
+        label.pack(padx=6, pady=3)
+
+    def hide_tip(self, event=None):
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+            
 class PSVM(ttk.Frame):
     def __init__(self, parent: tk.Tk):
         super().__init__(parent)
         self.parent = parent
-
-        self.parent.overrideredirect(False)
-        
         self.version = "v1.0.0"
 
-        self.parent.geometry("1024x768")
-            
-        self.parent.title(f"SANBA | Seismic Ambient Noise-Based Analysis {self.version}")
+        self._init_state()
+        self._configure_window()
+        self._configure_styles()
+        self._load_assets()
+        self._build_menu()
+        self._build_toolbar()
+        self._build_plot_area()
+        self._build_status_bar()
+        self._set_default_parameters()
 
-        style = ttk.Style(self.parent)
-        style.theme_use("vista")
-        default_font = ("Segoe UI", 10)  # looks modern on Windows; ok elsewhere
-        self.parent.option_add("*Font", default_font)
-        style.configure("Toolbar.TFrame", padding=(8, 6))
-        style.configure("Toolbar.TButton", padding=(8, 6))
-        style.configure("Status.TLabel", padding=(10, 6))
-        style.configure("Tooltip.TFrame", relief="solid", borderwidth=1)
-        style.configure("Tooltip.TLabel")
+    # ------------------------------------------------------------------
+    # INITIALIZATION HELPERS
+    # ------------------------------------------------------------------
+    def _init_state(self):
+        self.current_project_path = None
+        self.pairs = None
+        self.status_var = tk.StringVar(value="Welcome to SANBA!")
 
+    def _configure_window(self):
+        self.parent.overrideredirect(False)
+        self.parent.title(f"SANBA {self.version}")
         self.parent.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.parent.after(10, self._maximize_window)
 
-        script_dir = os.path.dirname(os.path.realpath(__file__))
-        self.window_ico = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_sanba.png")))
+    def _maximize_window(self):
+        # Windows
+        try:
+            self.parent.state("zoomed")
+            return
+        except tk.TclError:
+            pass
+
+        # Many Linux window managers
+        try:
+            self.parent.attributes("-zoomed", True)
+            return
+        except tk.TclError:
+            pass
+
+        # Fallback: manually size to screen
+        try:
+            width = self.parent.winfo_screenwidth()
+            height = self.parent.winfo_screenheight()
+            self.parent.geometry(f"{width}x{height}+0+0")
+        except tk.TclError:
+            pass
+
+    def _configure_styles(self):
+        self.style = ttk.Style(self.parent)
+        self.style.theme_use("vista")
+
+        default_font = ("Segoe UI", 10)
+        self.parent.option_add("*Font", default_font)
+
+        self.style.configure("Toolbar.TFrame", padding=(8, 6))
+        self.style.configure("Toolbar.TButton", padding=(8, 6))
+        self.style.configure("Status.TLabel", padding=(10, 6))
+        self.style.configure("Tooltip.TFrame", relief="solid", borderwidth=1)
+        self.style.configure("Tooltip.TLabel")
+
+    def _load_assets(self):
+        self.script_dir = os.path.dirname(os.path.realpath(__file__))
+        icons_dir = os.path.join(self.script_dir, "icons")
+
+        self.window_ico = ImageTk.PhotoImage(
+            Image.open(os.path.join(icons_dir, "ico_sanba.png"))
+        )
         self.parent.iconphoto(False, self.window_ico)
 
+        self.icons = {
+            "create": ImageTk.PhotoImage(Image.open(os.path.join(icons_dir, "ico_new.png"))),
+            "open": ImageTk.PhotoImage(Image.open(os.path.join(icons_dir, "ico_load.png"))),
+            "pairs": ImageTk.PhotoImage(Image.open(os.path.join(icons_dir, "ico_pair.png"))),
+            "corr": ImageTk.PhotoImage(Image.open(os.path.join(icons_dir, "ico_corr.png"))),
+            "stack": ImageTk.PhotoImage(Image.open(os.path.join(icons_dir, "ico_stack.png"))),
+            "mwcs": ImageTk.PhotoImage(Image.open(os.path.join(icons_dir, "ico_mwcs.png"))),
+            "plot_dvv": ImageTk.PhotoImage(Image.open(os.path.join(icons_dir, "ico_dvv.png"))),
+            "options": ImageTk.PhotoImage(Image.open(os.path.join(icons_dir, "ico_options.png"))),
+        }
+
+    def _build_menu(self):
         menubar = tk.Menu(self.parent)
         self.parent.config(menu=menubar)
 
+        self._build_file_menu(menubar)
+        self._build_processing_menu(menubar)
+        self._build_plot_menu(menubar)
+        self._build_options_menu(menubar)
+
+    def _build_file_menu(self, menubar):
         file_menu = tk.Menu(menubar, tearoff=False)
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Create new project path", command=self.create_project)
@@ -86,6 +159,7 @@ class PSVM(ttk.Frame):
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.on_closing)
 
+    def _build_processing_menu(self, menubar):
         processing_menu = tk.Menu(menubar, tearoff=False)
         menubar.add_cascade(label="Processing", menu=processing_menu)
         processing_menu.add_command(label="Get pairs", command=self.get_pairs)
@@ -95,100 +169,92 @@ class PSVM(ttk.Frame):
         processing_menu.add_separator()
         processing_menu.add_command(label="Run all steps", command=self.run_all)
 
+    def _build_plot_menu(self, menubar):
         plotting_menu = tk.Menu(menubar, tearoff=False)
         menubar.add_cascade(label="Plot", menu=plotting_menu)
         plotting_menu.add_command(label="Plot dv/v", command=self.plot_dvv)
-        #plotting_menu.add_command(label="Plot spatially averaged dv/v", command=self.spatial_average)
-        #plotting_menu.add_command(label="Plot mean dv/v", command=self.plot_dvv_mean)
 
+    def _build_options_menu(self, menubar):
         options_menu = tk.Menu(menubar, tearoff=False)
         menubar.add_cascade(label="Options", menu=options_menu)
-        #options_menu.add_command(label="Correlation and stacking parameters", command=self.set_parameters_corr_stack)
-        #options_menu.add_command(label="MWCS parameters", command=self.set_parameters_mwcs)
-        #options_menu.add_command(label="Plot parameters", command=self.ploting_options)
         options_menu.add_command(label="Settings", command=self.options)
-        #options_menu.add_command(label="Spatial average parameters", command=self.settings_spatial_average)
-        #options_menu.add_separator()
-        #options_menu.add_command(label="Load parameters from file", command=self.load_settings_file)
 
+    def _build_toolbar(self):
         toolbar_frame = ttk.Frame(self.parent, style="Toolbar.TFrame")
         toolbar_frame.pack(fill="x")
+        self.toolbar_frame = toolbar_frame
 
-        self.create_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_new.png")))
-        self.open_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_load.png")))
-        self.get_pairs_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_pair.png")))
-        self.corr_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_corr.png")))
-        self.stack_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_stack.png")))
-        self.mwcs_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_mwcs.png")))
-        self.plot_dvv_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_dvv.png")))
-        #self.spatAverage_dvv_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "spatial_average_ico.png")))
-        self.options_ico_img = ImageTk.PhotoImage(Image.open(os.path.join(script_dir, "icons", "ico_options.png")))
+        buttons = [
+            ("create_project_button", "create", self.create_project, "Create a new project"),
+            ("load_project_button", "open", self.load_project, "Load an existing project"),
+            ("find_pairs_button", "pairs", self.get_pairs, "Select station pairs"),
+            ("corr_button", "corr", lambda: Thread(target=self.correlation).start(), "Run correlation"),
+            ("stack_button", "stack", lambda: Thread(target=self.stack).start(), "Run stacking"),
+            ("mwcs_button", "mwcs", lambda: Thread(target=self.mwcs).start(), "Run MWCS analysis"),
+            ("plot_dvv_button", "plot_dvv", lambda: Thread(target=self.plot_dvv).start(), "Plot dv/v results"),
+            ("options_button", "options", self.options, "Open settings"),
+        ]
 
-        self.create_project_button = ttk.Button(toolbar_frame, image=self.create_ico_img, command=self.create_project,style="Toolbar.TButton")
-        self.create_project_button.pack(side="left")
+        for attr_name, icon_key, command, tooltip_text in buttons:
+            button = ttk.Button(
+                toolbar_frame,
+                image=self.icons[icon_key],
+                command=command,
+                style="Toolbar.TButton"
+            )
+            button.pack(side="left")
 
-        self.load_project_button = ttk.Button(toolbar_frame, image=self.open_ico_img, command=self.load_project,style="Toolbar.TButton")
-        self.load_project_button.pack(side="left")
+            ToolTip(button, tooltip_text)  # 👈 add this line
 
-        self.find_pairs_button = ttk.Button(toolbar_frame, image=self.get_pairs_ico_img, command=self.get_pairs,style="Toolbar.TButton")
-        self.find_pairs_button.pack(side="left")
+            setattr(self, attr_name, button)
 
-        self.corr_button = ttk.Button(toolbar_frame, image=self.corr_ico_img, command=lambda: Thread(target=self.correlation).start(),style="Toolbar.TButton")
-        self.corr_button.pack(side="left")
+        ttk.Label(toolbar_frame, text="Progress: ").pack(side="left", padx=(10, 4))
 
-        self.stack_button = ttk.Button(toolbar_frame, image=self.stack_ico_img, command=lambda: Thread(target=self.stack).start(),style="Toolbar.TButton")
-        self.stack_button.pack(side="left")
-
-        self.mwcs_button = ttk.Button(toolbar_frame, image=self.mwcs_ico_img, command=lambda: Thread(target=self.mwcs).start(),style="Toolbar.TButton")
-        self.mwcs_button.pack(side="left")
-
-        self.plot_dvv_button = ttk.Button(toolbar_frame, image=self.plot_dvv_ico_img, command=lambda: Thread(target=self.plot_dvv).start(),style="Toolbar.TButton")
-        self.plot_dvv_button.pack(side="left")
-
-        #self.plot_spatial_average_dvv_button = ttk.Button(toolbar_frame, image=self.spatAverage_dvv_ico_img, command=lambda: Thread(target=self.spatial_average).start())
-        #self.plot_spatial_average_dvv_button.pack(side="left")
-
-        self.options_button = ttk.Button(toolbar_frame, image=self.options_ico_img, command=self.options,style="Toolbar.TButton")
-        self.options_button.pack(side="left")
-
-        ttk.Label(toolbar_frame, text="Progress: ").pack(side="left")
-        
-        self.progress = ttk.Progressbar(toolbar_frame, length=220, mode="determinate")
+        self.progress = ttk.Progressbar(
+            toolbar_frame,
+            length=220,
+            mode="determinate"
+        )
         self.progress.pack(side="left")
 
+    def _build_plot_area(self):
         frame_plot = ttk.Frame(self.parent)
-        frame_plot.pack(fill="both", expand="True")
+        frame_plot.pack(fill="both", expand=True)
+        self.frame_plot = frame_plot
 
         self.fig = plt.figure()
-        
         self.ax = self.fig.add_subplot(111)
         self.ax2 = self.ax.twinx()
 
-        canvas = FigureCanvasTkAgg(self.fig, master=frame_plot)
-        canvas.draw()
-        canvas.get_tk_widget().pack(side="top", fill="both", expand=1)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=frame_plot)
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
 
-        toolbar = NavigationToolbar2Tk(canvas, frame_plot)
-        toolbar.update()
-        canvas.get_tk_widget().pack(side="top", fill="both", expand=1)
+        self.plot_toolbar = NavigationToolbar2Tk(self.canvas, frame_plot)
+        self.plot_toolbar.update()
 
+    def _build_status_bar(self):
         status_frame = ttk.Frame(self.parent)
         status_frame.pack(side=tk.BOTTOM, fill=tk.X)
 
-        self.status_var = tk.StringVar()
-        self.status_var.set("Ready")
-        status_label = ttk.Label(status_frame, textvariable=self.status_var, relief="groove", style="Status.TLabel")
-        status_label.pack(fill="x")
+        self.status_label = ttk.Label(
+            status_frame,
+            textvariable=self.status_var,
+            relief="groove",
+            style="Status.TLabel"
+        )
+        self.status_label.pack(fill="x")
 
-        self.current_project_path = None
-
-        self.pairs = None
-
+    def _set_default_parameters(self):
+        # ---------------------------
+        # Correlation / stacking
+        # ---------------------------
         self.network_code = "AM"
         self.channel_code = "EHZ.D"
         self.do_crosscomponent_analysis = False
-        self.corr_sorting_type = "both"#"both" #"individual" #"pairs"
-        self.correlation_method = "pcc"#"pcc" #cc
+        self.corr_sorting_type = "individual"#both#pairs#individual
+        self.correlation_method = "pcc"
+
         self.corr_remove_response = False
         self.corr_remove_mean = True
         self.corr_remove_trend = True
@@ -196,37 +262,41 @@ class PSVM(ttk.Frame):
         self.corr_bandpass_filter = True
         self.corr_onebit_norm = False
         self.corr_spectral_whitening = False
+
         self.corr_window_size = 3600
         self.corr_overlap = 0
         self.corr_min_freq = 3
-        self.corr_max_freq = 11
-        self.corr_resample_rate = self.corr_max_freq*2
-        self.corr_max_lag = 3
+        self.corr_max_freq = 12
+        self.corr_resample_rate = self.corr_max_freq * 2
+        self.corr_max_lag = 5
         self.corr_snr_threshold = 0
-        self.stack_window_length_days = 1 #1 = 24h/1day
+        self.stack_window_length_days = 2
 
-        self.mwcs_reference = "mean" #static,following,mean
-        self.mwcs_freq_min = 4#self.corr_min_freq
-        self.mwcs_freq_max = 10#self.corr_max_freq
+        # ---------------------------
+        # MWCS
+        # ---------------------------
+        self.mwcs_reference = "following"#mean
+        self.mwcs_freq_min = 4
+        self.mwcs_freq_max = 10
         self.mwcs_window_length = 1
-        self.mwcs_window_step = self.mwcs_window_length/5
+        self.mwcs_window_step = self.mwcs_window_length / 10
         self.mwcs_moving_start = -self.corr_max_lag
-        self.mwcs_coherency_min = 0.5#0.5
-        self.mwcs_error_max = 0.2#0.2
-        self.mwcs_lagtime_ballistic = 1#self.corr_max_lag/10
-        self.mwcs_lagtime_max = self.corr_max_lag
-        self.mwcs_abs_delay_time_limit = 0.1#0.1
-        self.mwcs_do_similarity_analysis = False
-        self.mwcs_similarity_method = "zero_lag_pcc"#"zero_lag_cc","zero_lag_pcc"
 
+        self.mwcs_coherency_min = 0.5
+        self.mwcs_error_max = 0.2
+        self.mwcs_lagtime_ballistic = 1
+        self.mwcs_lagtime_max = self.corr_max_lag
+        self.mwcs_abs_delay_time_limit = 0.1
+
+        self.mwcs_do_similarity_analysis = False
+        self.mwcs_similarity_method = "zero_lag_pcc"
+
+        # ---------------------------
+        # Plotting
+        # ---------------------------
         self.corr_plot = True
         self.stack_plot = True
-        self.mwcs_plot = True
-        #self.plot_dvv_gap_limit = 999999999#60*60*24*self.stack_window_length_days/2
-
-        #self.spatial_average_median_filter = False
-        #self.spatial_average_filter_window_size = "4H"
-        #self.spatial_average_gap_limit = self.plot_dvv_gap_limit
+        self.mwcs_plot = False
 
     def on_closing(self):
         if tk.messagebox.askyesno("SANBA", "Exit?"):
@@ -659,7 +729,6 @@ class PSVM(ttk.Frame):
         self.plot_dvv()
 
     def create_project(self):
-
         directory = filedialog.askdirectory()
 
         if directory:
@@ -667,22 +736,28 @@ class PSVM(ttk.Frame):
 
             if project_name:
                 proj_dir = os.path.join(directory, project_name)
-                if os.path.exists(proj_dir):
-                    messagebox.showwarning("SANBA", "This project already exists, please enter a different name.")
-                    return
-                else:
-                    os.makedirs(proj_dir, exist_ok=True)
-                    data_dir = os.path.join(proj_dir, "data")
-                    os.makedirs(data_dir, exist_ok=True)
-                    out_dir = os.path.join(proj_dir, "out")
-                    os.makedirs(out_dir, exist_ok=True)
-                    os.makedirs(os.path.join(out_dir, "corr"), exist_ok=True)
-                    os.makedirs(os.path.join(out_dir, "stack"), exist_ok=True)
-                    os.makedirs(os.path.join(out_dir, "dvv"), exist_ok=True)
 
-                    self.current_project_path = os.path.abspath(f'projects/{project_name}')
-                    self.status_var.set("Finished creating project.")
-                    tk.messagebox.showinfo("SANBA", "Project created successfully.")
+                if os.path.exists(proj_dir):
+                    messagebox.showwarning(
+                        "SANBA",
+                        "This project already exists, please enter a different name."
+                    )
+                    return
+
+                os.makedirs(proj_dir, exist_ok=True)
+
+                data_dir = os.path.join(proj_dir, "data")
+                out_dir = os.path.join(proj_dir, "out")
+
+                os.makedirs(data_dir, exist_ok=True)
+                os.makedirs(out_dir, exist_ok=True)
+                os.makedirs(os.path.join(out_dir, "corr"), exist_ok=True)
+                os.makedirs(os.path.join(out_dir, "stack"), exist_ok=True)
+                os.makedirs(os.path.join(out_dir, "dvv"), exist_ok=True)
+
+                self.current_project_path = os.path.abspath(proj_dir)
+                self.status_var.set("Finished creating project.")
+                tk.messagebox.showinfo("SANBA", "Project created successfully.")
 
     def load_project(self):
 
@@ -1163,13 +1238,14 @@ class PSVM(ttk.Frame):
                         # Format the y-axis to display dates
                         self.ax.yaxis_date()
                         #self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
-                        self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+                        #self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+                        self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y %H:%M'))
 
                         # Set the x and y labels
                         #self.ax.set_xlabel('Lag-time (s)')
                         #self.ax.set_ylabel('Start time')
                         self.ax.set_xlabel('Time lag (s)')
-                        self.ax.set_ylabel('Time (hh:mm)')
+                        self.ax.set_ylabel('Time (dd/mm/yyyy hh:mm)')
 
                         # Add a colorbar
                         #self.fig.colorbar(im, ax=self.ax, label='Cross-correlation')
@@ -1370,18 +1446,19 @@ class PSVM(ttk.Frame):
                                        extent=[lag[0], lag[-1], mdates.date2num(start_times[0]),
                                                mdates.date2num(end_times[-1])])
 
-                        self.ax.set_title(f"Stacked correlation functions over time | {station1}.{channel1} - {station2}.{channel2}")
+                        self.ax.set_title(f"Stacked correlation functions over time | {station1}.{channel1} - {station2}.{channel2} | {self.stack_window_length_days:.1f} day(s)")
                         
                         # Format the y-axis to display dates
                         self.ax.yaxis_date()
                         #self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
-                        self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+                        #self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+                        self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y %H:%M'))
 
                         # Set the x and y labels
                         #self.ax.set_xlabel('Lag Time (s)')
                         #self.ax.set_ylabel('Start Time')
                         self.ax.set_xlabel('Time lag (s)')
-                        self.ax.set_ylabel('Horário (hh:mm)')
+                        self.ax.set_ylabel('Time (dd/mm/yyyy hh:mm)')
 
 
                         # Add a colorbar
@@ -1637,7 +1714,7 @@ class PSVM(ttk.Frame):
                             self.ax2.set_ylabel('dt (s)')
                             self.ax2.set_ylim([-self.mwcs_abs_delay_time_limit*1.25,self.mwcs_abs_delay_time_limit*1.25])
 
-                            self.ax.set_title(f'MWCS | {station1}.{channel1} - {station2}.{channel2} | {date.strftime("%d/%m/%Y %H:%M:%S")} | Stack of {self.stack_window_length_days} day(s) | {self.mwcs_freq_min} - {self.mwcs_freq_max} Hz')
+                            self.ax.set_title(f'MWCS | {station1}.{channel1} - {station2}.{channel2} | {date.strftime("%d/%m/%Y %H:%M:%S")} | {self.mwcs_freq_min} - {self.mwcs_freq_max} Hz')
                             lns = cer + cem + delayTime + linReg
                             labels = [l.get_label() for l in lns]
                             self.ax.legend(lns, labels, loc="upper right", fontsize=9)
