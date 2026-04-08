@@ -8,20 +8,18 @@ from obspy import read, Trace, Stream
 from matplotlib import pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-from scipy.signal import hilbert, correlate, fftconvolve
+from scipy.signal import hilbert, correlate, fftconvolve, detrend
 import numpy as np
 from numpy import isnan, isinf
-from msnoise.move2obspy import mwcs as msnoise_mwcs
 import datetime
 from obspy.signal.regression import linear_regression
+from obspy.signal.invsim import cosine_taper
 import pandas as pd
 from tqdm import tqdm, trange
 import warnings
 import gc
 from obspy.io.mseed.headers import InternalMSEEDWarning
 from pandas.plotting import register_matplotlib_converters
-from io import BytesIO
-from re import sub
 from scipy.interpolate import griddata
 from threading import Thread
 
@@ -165,7 +163,7 @@ class PSVM(ttk.Frame):
         processing_menu.add_command(label="Get pairs", command=self.get_pairs)
         processing_menu.add_command(label="Run correlation", command=self.correlation)
         processing_menu.add_command(label="Run stacking", command=self.stack)
-        processing_menu.add_command(label="Run MWCS", command=self.mwcs)
+        processing_menu.add_command(label="Run MWCS", command=self.compute_dvv)
         processing_menu.add_separator()
         processing_menu.add_command(label="Run all steps", command=self.run_all)
 
@@ -190,7 +188,7 @@ class PSVM(ttk.Frame):
             ("find_pairs_button", "pairs", self.get_pairs, "Select station pairs"),
             ("corr_button", "corr", lambda: Thread(target=self.correlation).start(), "Run correlation"),
             ("stack_button", "stack", lambda: Thread(target=self.stack).start(), "Run stacking"),
-            ("mwcs_button", "mwcs", lambda: Thread(target=self.mwcs).start(), "Run MWCS analysis"),
+            ("mwcs_button", "mwcs", lambda: Thread(target=self.compute_dvv).start(), "Run MWCS analysis"),
             ("plot_dvv_button", "plot_dvv", lambda: Thread(target=self.plot_dvv).start(), "Plot dv/v results"),
             ("options_button", "options", self.options, "Open settings"),
         ]
@@ -252,10 +250,9 @@ class PSVM(ttk.Frame):
         self.network_code = "AM"
         self.channel_code = "EHZ.D"
         self.do_crosscomponent_analysis = False
-        self.corr_sorting_type = "individual"#both#pairs#individual
-        self.correlation_method = "pcc"
+        self.corr_sorting_type = "pairs"#both#pairs#individual
+        self.correlation_method = "pcc"#pcc#cc
 
-        self.corr_remove_response = False
         self.corr_remove_mean = True
         self.corr_remove_trend = True
         self.corr_taper = True
@@ -270,12 +267,12 @@ class PSVM(ttk.Frame):
         self.corr_resample_rate = self.corr_max_freq * 2
         self.corr_max_lag = 5
         self.corr_snr_threshold = 0
-        self.stack_window_length_days = 2
+        self.stack_window_length_days = 1
 
         # ---------------------------
         # MWCS
         # ---------------------------
-        self.mwcs_reference = "following"#mean
+        self.mwcs_reference = "following"#mean#following#static
         self.mwcs_freq_min = 4
         self.mwcs_freq_max = 10
         self.mwcs_window_length = 1
@@ -725,7 +722,7 @@ class PSVM(ttk.Frame):
 
         self.correlation()
         self.stack()
-        self.mwcs()
+        self.compute_dvv()
         self.plot_dvv()
 
     def create_project(self):
@@ -833,7 +830,7 @@ class PSVM(ttk.Frame):
         else:
             tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
 
-    def spectral_whitening(self, signal, dt, f1, f2):
+    '''def spectral_whitening(self, signal, dt, f1, f2):
         # Number of samples in the signal
         n = len(signal)
         # FFT of the signal
@@ -852,36 +849,73 @@ class PSVM(ttk.Frame):
         whitened_fft = magnitude * np.exp(1j * phase)
         # Inverse FFT to get the whitened time domain signal
         whitened_signal = np.fft.ifft(whitened_fft).real
+        return whitened_signal'''
+
+    def spectral_whitening(self, signal, dt, f1, f2, napod=100):
+        signal = np.asarray(signal, dtype=float)
+
+        if signal.ndim != 1:
+            raise ValueError("signal must be a 1D array.")
+        if len(signal) == 0:
+            raise ValueError("signal cannot be empty.")
+        if dt <= 0:
+            raise ValueError("dt must be positive.")
+        if f1 <= 0 or f2 <= 0 or f1 >= f2:
+            raise ValueError("Require 0 < f1 < f2.")
+
+        n = len(signal)
+        nfft = n
+
+        fft_signal = np.fft.fft(signal, nfft)
+        freq_vec = np.fft.fftfreq(nfft, d=dt)[: nfft // 2]
+
+        band_idx = np.where((freq_vec >= f1) & (freq_vec <= f2))[0]
+        if len(band_idx) == 0:
+            raise ValueError("No FFT bins found inside the whitening band.")
+
+        low = band_idx[0] - napod
+        if low <= 0:
+            low = 1
+
+        porte1 = band_idx[0]
+        porte2 = band_idx[-1]
+
+        high = band_idx[-1] + napod
+        if high > nfft // 2:
+            high = nfft // 2
+
+        whitened_fft = fft_signal.copy()
+
+        # Left stop band
+        whitened_fft[0:low] = 0
+
+        # Left taper
+        if porte1 > low:
+            taper = np.cos(np.linspace(np.pi / 2.0, np.pi, porte1 - low)) ** 2
+            whitened_fft[low:porte1] = taper * np.exp(1j * np.angle(whitened_fft[low:porte1]))
+
+        # Pass band
+        if porte2 > porte1:
+            whitened_fft[porte1:porte2] = np.exp(1j * np.angle(whitened_fft[porte1:porte2]))
+        else:
+            whitened_fft[porte1:porte2 + 1] = np.exp(1j * np.angle(whitened_fft[porte1:porte2 + 1]))
+
+        # Right taper
+        if high > porte2:
+            taper = np.cos(np.linspace(0.0, np.pi / 2.0, high - porte2)) ** 2
+            whitened_fft[porte2:high] = taper * np.exp(1j * np.angle(whitened_fft[porte2:high]))
+
+        # Right stop band
+        whitened_fft[high:nfft + 1] = 0
+
+        # Hermitian symmetry for real-valued time-domain reconstruction
+        whitened_fft[-(nfft // 2) + 1:] = whitened_fft[1:(nfft // 2)].conjugate()[::-1]
+
+        whitened_signal = np.real(np.fft.ifft(whitened_fft, nfft))
+
         return whitened_signal
-    
+
     '''def cc(self, x1, x2, dt, lag0, lagu):
-        
-        N = len(x1)
-        # Compute the FFT of the signals
-        x1_fft = np.fft.fft(x1)
-        x2_fft = np.fft.fft(x2)
-        
-        # Compute the cross-correlation using the FFT
-        amp = x1_fft * np.conj(x2_fft)
-        cc = np.real(np.fft.ifft(amp))
-        
-        # Normalize the cross-correlation
-        #cc /= N
-        
-        # Reorganize the result to have the correct symmetry
-        cc = np.fft.ifftshift(cc)
-
-        # Get the cross-correlation at zero lag
-        cc_zero_lag = cc[len(cc) // 2]
-
-        # Create the time vector t ranging from -tt to tt
-        tt = N // 2 * dt
-        t = np.arange(-tt, tt, dt)
-
-        # Return the time vector and the cc values within the specified lag time range
-        return t[(t >= lag0) & (t <= lagu)], cc[(t >= lag0) & (t <= lagu)], cc_zero_lag'''
-
-    def cc(self, x1, x2, dt, lag0, lagu):
         #x1 = np.asarray(x1)
         #x2 = np.asarray(x2)
         N = len(x1)
@@ -910,23 +944,62 @@ class PSVM(ttk.Frame):
         t_out = t[sel]
         cc_out = cc_norm[sel]
         cc_zero_lag = cc_norm[np.where(lags == 0)[0][0]]
-        return t_out, cc_out, cc_zero_lag
-    
-    '''def cc(self, x1, x2, dt, lag0, lagu):  
+        return t_out, cc_out, cc_zero_lag'''
+
+    def cc(self, x1, x2, dt, lag0, lagu):
+        x1 = np.asarray(x1, dtype=float)
+        x2 = np.asarray(x2, dtype=float)
+
+        if x1.ndim != 1 or x2.ndim != 1:
+            raise ValueError("x1 and x2 must be 1D arrays.")
+
         N = len(x1)
-        x1_fft = np.fft.fft(x1)
-        x2_fft = np.fft.fft(x2)
-        amp = x1_fft * np.conj(x2_fft)
-        cc = np.real(np.fft.ifft(amp))
-        cc = np.fft.ifftshift(cc)
+        M = len(x2)
+
+        if N != M:
+            raise ValueError("x1 and x2 must be same length for this function.")
+
+        Nt = N
+
+        # FFT length
+        nfft = Nt
+
+        # FFT of both signals
+        X1 = np.fft.fft(x1, n=nfft)
+        X2 = np.fft.fft(x2, n=nfft)
+
+        # Frequency-domain cross-correlation
+        cc = np.conj(X1) * X2
+        cc = np.real(np.fft.ifft(cc, nfft)) / Nt
+
+        # Rearrange to lags from -(Nt-1) to +(Nt-1)
+        cc = np.concatenate((cc[-Nt + 1:], cc[:Nt]))
+
+        # Time / lag axis
+        lags = np.arange(-Nt + 1, Nt)
+        t = lags * dt
+
         # Global normalization
-        norm_factor = np.linalg.norm(x1) * np.linalg.norm(x2)
-        if norm_factor != 0:
-            cc /= norm_factor
-        cc_zero_lag = cc[len(cc) // 2]
-        tt = N // 2 * dt
-        t = np.arange(-tt, tt, dt)
-        return t[(t >= lag0) & (t <= lagu)], cc[(t >= lag0) & (t <= lagu)], cc_zero_lag'''
+        # Equivalent to dividing by the product of RMS amplitudes
+        rms1 = np.sqrt(np.mean(x1 ** 2))
+        rms2 = np.sqrt(np.mean(x2 ** 2))
+        E = rms1 * rms2
+
+        if E > np.finfo(float).eps:
+            cc = cc / E
+        else:
+            cc = np.zeros_like(cc)
+
+        # Select requested lag window
+        sel = (t >= lag0) & (t <= lagu)
+        t_out = t[sel]
+        cc_out = cc[sel]
+
+        # Zero-lag value
+        zero_idx = np.where(lags == 0)[0]
+        cc_zero_lag = cc[zero_idx[0]] if len(zero_idx) else np.nan
+
+        return t_out, cc_out, cc_zero_lag
     
     # PCC2 computation from Ventosa et al. (2019)
     def pcc2(self, x1, x2, dt, lag0, lagu):
@@ -1088,20 +1161,6 @@ class PSVM(ttk.Frame):
                         # Trim both streams
                         st1.trim(start_time, end_time)
                         st2.trim(start_time, end_time)
-
-                        '''if self.corr_remove_response:
-                            #if response_type == "rshake":
-                                
-                            xml = BytesIO(edit_xml_content_RS1D(os.path.join(resp_path, "1Dv7.xml"), st1[0], st1[0].stats.station))
-                            resp1 = read_inventory(xml)
-                            xml = BytesIO(edit_xml_content_RS1D(os.path.join(resp_path, "1Dv7.xml"), st2[0], st2[0].stats.station))
-                            resp2 = read_inventory(xml)
-
-                            st1.attach_response(resp1)
-                            st2.attach_response(resp2)
-                                
-                            st1.remove_response(inventory=resp1, pre_filt = [min_freq/2, min_freq, max_freq, max_freq+5], taper = False)
-                            st2.remove_response(inventory=resp2, pre_filt = [min_freq/2, min_freq, max_freq, max_freq+5], taper = False)'''
                         
                         # Detrend, demean, taper
                         if self.corr_remove_mean:
@@ -1262,23 +1321,6 @@ class PSVM(ttk.Frame):
                 self.status_var.set(f"Correlation calculation for {station1} {channel1} and {station2} {channel2} completed")
                 self.progress.update_idletasks()
                 self.progress["value"] += 1
-
-    def edit_xml_content_RS1D(xml_original, trace, station_name):
-
-        replacements = {
-            '<station publicID="STNNM.Station" code="STNNM">': f'<station publicID="{station_name}.Station" code="{station_name}">',
-            '<start>YYYY-MM-DDT00:00:00.00Z</start>': f'<start>{trace.stats.starttime}</start>'
-        }
-
-        with open(xml_original, 'r') as in_file:
-            content = in_file.read()
-
-        for pattern, replacement in replacements.items():
-            content = sub(pattern, replacement, content, count=1)
-
-        content_bytes = content.encode('utf-8')
-
-        return content_bytes
 
     def stack(self):
 
@@ -1531,8 +1573,197 @@ class PSVM(ttk.Frame):
                         mean_zero_lag_correlations[np.round(abs(lag),2)] = mean_zero_lag_correlation
         
         return mean_zero_lag_correlations#np.array(abs(central_lags)), mean_zero_lag_correlations
+
+    # ------------------------------------------------------------------
+    # MWCS implementation adapted from MSNoise
+    # Original logic based on the MWCS method implementation available in
+    # the MSNoise package. Rewritten here in a self-contained form.
+    # ------------------------------------------------------------------
+
+    def _nextpow2(self, n):
+        """Return p such that 2**p is the next power of two >= n."""
+        if n < 1:
+            return 0
+        return int(np.ceil(np.log2(n)))
+
+
+    def _mwcs_smooth(self, x, window="boxcar", half_win=3):
+        """
+        Smooth a 1D array using a symmetric window.
+
+        This helper follows the logic used in the MSNoise MWCS implementation.
+        """
+        window_len = 2 * half_win + 1
+
+        if window_len < 3:
+            return x.copy()
+
+        # Reflect signal at both ends to reduce border effects
+        s = np.r_[x[window_len - 1:0:-1], x, x[-1:-window_len:-1]]
+
+        if window == "boxcar":
+            w = np.ones(window_len, dtype=complex)
+        else:
+            # Equivalent to scipy.signal.windows.hann(window_len)
+            w = np.hanning(window_len).astype(complex)
+
+        y = np.convolve(w / w.sum(), s, mode="valid")
+        return y[half_win:len(y) - half_win]
+
+
+    def _mwcs_get_coherence(self, dcs, ds1, ds2):
+        """
+        Compute coherence from cross-spectrum amplitude and auto-spectrum amplitudes.
+
+        This helper follows the logic used in the MSNoise MWCS implementation.
+        """
+        n = len(dcs)
+        coh = np.zeros(n, dtype=complex)
+
+        valid = np.argwhere(np.logical_and(np.abs(ds1) > 0, np.abs(ds2) > 0))
+        coh[valid] = dcs[valid] / (ds1[valid] * ds2[valid])
+        coh[coh > (1.0 + 0j)] = 1.0 + 0j
+
+        return coh
+
+
+    def mwcs(self, current, reference, freqmin, freqmax, df, tmin, window_length,
+             step, smoothing_half_win=5):
+        """
+        Moving-Window Cross-Spectral (MWCS) analysis.
+        This implementation is adapted from the MSNoise package and rewritten
+        here in a self-contained form for direct use.
+
+        """
+        current = np.asarray(current, dtype=float)
+        reference = np.asarray(reference, dtype=float)
+
+        if current.ndim != 1 or reference.ndim != 1:
+            raise ValueError("current and reference must be 1D arrays.")
+        if len(current) != len(reference):
+            raise ValueError("current and reference must have the same length.")
+        if df <= 0:
+            raise ValueError("df must be positive.")
+        if freqmin <= 0 or freqmax <= 0 or freqmin >= freqmax:
+            raise ValueError("Require 0 < freqmin < freqmax.")
+        if window_length <= 0 or step <= 0:
+            raise ValueError("window_length and step must be positive.")
+
+        delta_t = []
+        delta_err = []
+        delta_mcoh = []
+        time_axis = []
+
+        window_length_samples = int(window_length * df)
+        step_samples = int(step * df)
+
+        if window_length_samples < 2:
+            raise ValueError("window_length is too short for the given sampling rate.")
+        if step_samples < 1:
+            raise ValueError("step is too short for the given sampling rate.")
+
+        # padd = 2 ** (nextpow2(window_length_samples) + 2)
+        padd = int(2 ** (self._nextpow2(window_length_samples) + 2))
+
+        # taper
+        tp = cosine_taper(window_length_samples, 0.85)
+
+        minind = 0
+        maxind = window_length_samples
+        count = 0
+
+        while maxind <= len(current):
+            # Slice current and reference windows
+            cci = current[minind:minind + window_length_samples].copy()
+            cri = reference[minind:minind + window_length_samples].copy()
+
+            # Detrend and taper
+            cci = detrend(cci, type="linear")
+            cri = detrend(cri, type="linear")
+            cci *= tp
+            cri *= tp
+
+            # Advance indices for next loop
+            minind += step_samples
+            maxind += step_samples
+
+            # FFT (positive frequencies only)
+            fcur = np.fft.fft(cci, n=padd)[:padd // 2]
+            fref = np.fft.fft(cri, n=padd)[:padd // 2]
+
+            # Power spectra
+            fcur2 = np.real(fcur) ** 2 + np.imag(fcur) ** 2
+            fref2 = np.real(fref) ** 2 + np.imag(fref) ** 2
+
+            # Cross-spectrum
+            X = fref * np.conj(fcur)
+
+            # Optional smoothing, following MSNoise logic
+            if smoothing_half_win != 0:
+                dcur = np.sqrt(self._mwcs_smooth(fcur2, window="hanning",
+                                                 half_win=smoothing_half_win))
+                dref = np.sqrt(self._mwcs_smooth(fref2, window="hanning",
+                                                 half_win=smoothing_half_win))
+                X = self._mwcs_smooth(X, window="hanning",
+                                      half_win=smoothing_half_win)
+            else:
+                dcur = np.sqrt(fcur2)
+                dref = np.sqrt(fref2)
+
+            dcs = np.abs(X)
+
+            # Frequency vector
+            freq_vec = np.fft.fftfreq(len(X) * 2, d=1.0 / df)[:padd // 2]
+
+            # Frequency range of interest
+            index_range = np.argwhere(
+                np.logical_and(freq_vec >= freqmin, freq_vec <= freqmax)
+            )
+
+            if index_range.size == 0:
+                continue
+
+            # Coherence and mean coherence
+            coh = self._mwcs_get_coherence(dcs, dref, dcur)
+            mcoh = np.mean(coh[index_range])
+
+            # Weights from MSNoise / Clarke et al. formulation
+            w = 1.0 / (1.0 / (coh[index_range] ** 2) - 1.0)
+            w[coh[index_range] >= 0.99] = 1.0 / (1.0 / 0.9801 - 1.0)
+            w = np.sqrt(w * np.sqrt(dcs[index_range]))
+            w = np.real(w)
+
+            # Angular frequency
+            v = np.real(freq_vec[index_range]) * 2.0 * np.pi
+
+            # Unwrapped phase
+            phi = np.angle(X)
+            phi[0] = 0.0
+            phi = np.unwrap(phi)
+            phi = phi[index_range]
+
+            # Weighted linear regression
+            # Uses the same linear_regression function you already import
+            m, em = linear_regression(v.flatten(), phi.flatten(), w.flatten())
+
+            # Delay time
+            delta_t.append(m)
+
+            # Error estimate, following MSNoise logic
+            e = np.sum((phi - m * v) ** 2) / (np.size(v) - 1)
+            s2x2 = np.sum(v ** 2 * w ** 2)
+            sx2 = np.sum(w * v ** 2)
+            e = np.sqrt(e * s2x2 / sx2 ** 2)
+
+            delta_err.append(e)
+            delta_mcoh.append(np.real(mcoh))
+            time_axis.append(tmin + window_length / 2.0 + count * step)
+
+            count += 1
+
+        return np.array([time_axis, delta_t, delta_err, delta_mcoh]).T
     
-    def mwcs(self):
+    def compute_dvv(self):
         
         if self.current_project_path == None:
             tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
@@ -1632,7 +1863,7 @@ class PSVM(ttk.Frame):
                             similarity = self.moving_window_crosscorrelation(current_data, reference_correlation, self.corr_resample_rate,
                                                                             self.mwcs_window_length, self.mwcs_window_step)
                                                 
-                        mwcs_data = msnoise_mwcs(current=current_data, 
+                        mwcs_data = self.mwcs(current=current_data, 
                                                 reference=reference_correlation, 
                                                 df=self.corr_resample_rate, 
                                                 freqmin=self.mwcs_freq_min, 
