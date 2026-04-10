@@ -1,6 +1,6 @@
 import sys
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox, simpledialog
 from PIL import ImageTk, Image
 import os
 from natsort import natsorted
@@ -22,6 +22,7 @@ from obspy.io.mseed.headers import InternalMSEEDWarning
 from pandas.plotting import register_matplotlib_converters
 from scipy.interpolate import griddata
 from threading import Thread
+import zoneinfo
 
 class ToolTip:
     def __init__(self, widget, text):
@@ -294,9 +295,10 @@ class PSVM(ttk.Frame):
         self.corr_plot = True
         self.stack_plot = True
         self.mwcs_plot = False
+        self.output_timezone = "America/Sao_Paulo"
 
     def on_closing(self):
-        if tk.messagebox.askyesno("SANBA", "Exit?"):
+        if messagebox.askyesno("SANBA", "Exit?"):
             self.parent.destroy()
             sys.exit()
 
@@ -318,13 +320,6 @@ class PSVM(ttk.Frame):
 
         main_frame = ttk.Frame(self.top_options, padding=10)
         main_frame.pack(fill="both", expand=True)
-
-        '''title_label = ttk.Label(
-            main_frame,
-            text="PSVM Settings",
-            font=("TkDefaultFont", 12, "bold")
-        )
-        title_label.pack(pady=(0, 10))'''
 
         notebook = ttk.Notebook(main_frame)
         notebook.pack(fill="both", expand=True, pady=(0, 10))
@@ -462,11 +457,6 @@ class PSVM(ttk.Frame):
         entry_xcorr_max_lag = ttk.Entry(corr_scrollable_frame, width=25)
         entry_xcorr_max_lag.grid(row=21, column=1, sticky="ew", padx=corr_padx, pady=corr_pady)
         entry_xcorr_max_lag.insert(0, self.corr_max_lag)
-
-        '''ttk.Label(corr_scrollable_frame, text="Minimum SNR tolerance (0 = accept all):").grid(row=24, column=0, sticky="w", padx=corr_padx, pady=corr_pady)
-        entry_xcorr_snr = ttk.Entry(corr_scrollable_frame, width=25)
-        entry_xcorr_snr.grid(row=24, column=1, sticky="ew", padx=corr_padx, pady=corr_pady)
-        entry_xcorr_snr.insert(0, self.corr_snr_threshold)'''
 
         ttk.Label(corr_scrollable_frame, text="Signal extraction method:").grid(row=22, column=0, sticky="w", padx=corr_padx, pady=corr_pady)
         correlation_method_var = tk.StringVar(value=self.correlation_method)
@@ -618,6 +608,15 @@ class PSVM(ttk.Frame):
             variable=plot_mwcs_var
         ).pack(anchor="w", pady=4)
 
+        ttk.Label(tab_plot, text="Time settings", font=("TkDefaultFont", 10, "bold")).pack(anchor="w", pady=(10, 6))
+
+        frame_tz = ttk.Frame(tab_plot)
+        frame_tz.pack(fill="x", pady=4)
+        ttk.Label(frame_tz, text="Output timezone (Region/City):").pack(side="left", padx=(0, 8))
+        entry_timezone = ttk.Entry(frame_tz, width=30)
+        entry_timezone.pack(side="left", fill="x", expand=True)
+        entry_timezone.insert(0, self.output_timezone)
+
         # ------------------------------------------------------------------
         # BOTTOM BUTTONS
         # ------------------------------------------------------------------
@@ -669,6 +668,7 @@ class PSVM(ttk.Frame):
                 self.corr_plot = plot_corr_var.get()
                 self.stack_plot = plot_stack_var.get()
                 self.mwcs_plot = plot_mwcs_var.get()
+                self.output_timezone = str(entry_timezone.get()).strip()
 
                 # Basic validation
                 if self.corr_min_freq >= self.corr_max_freq:
@@ -695,12 +695,17 @@ class PSVM(ttk.Frame):
                 if self.mwcs_lagtime_ballistic > self.mwcs_lagtime_max:
                     raise ValueError("Ballistic exclusion time lag cannot be greater than maximum time lag.")
 
+                try:
+                    zoneinfo.ZoneInfo(self.output_timezone)
+                except Exception:
+                    raise ValueError(f"Invalid timezone: {self.output_timezone}\nExample of valid values: Europe/Paris, America/New_York, Asia/Tokyo...")
+
                 self.status_var.set("New settings saved successfully.")
-                tk.messagebox.showinfo("SANBA", "Settings saved successfully.")
+                messagebox.showinfo("SANBA", "Settings saved successfully.")
                 self.top_options.destroy()
 
             except ValueError as e:
-                tk.messagebox.showwarning("SANBA", f"Invalid inputs:\n{e}")
+                messagebox.showwarning("SANBA", f"Invalid inputs:\n{e}")
                 self.top_options.lift()
                 self.top_options.focus_force()
 
@@ -713,11 +718,11 @@ class PSVM(ttk.Frame):
     def run_all(self):
         
         if self.current_project_path == None:
-            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
+            messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
             return
             
         if self.pairs == None:
-            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
+            messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
             return
 
         self.correlation()
@@ -729,7 +734,7 @@ class PSVM(ttk.Frame):
         directory = filedialog.askdirectory()
 
         if directory:
-            project_name = tk.simpledialog.askstring("SANBA", "Enter the name of the new project:")
+            project_name = simpledialog.askstring("SANBA", "Enter the name of the new project:")
 
             if project_name:
                 proj_dir = os.path.join(directory, project_name)
@@ -754,7 +759,7 @@ class PSVM(ttk.Frame):
 
                 self.current_project_path = os.path.abspath(proj_dir)
                 self.status_var.set("Finished creating project.")
-                tk.messagebox.showinfo("SANBA", "Project created successfully.")
+                messagebox.showinfo("SANBA", "Project created successfully.")
 
     def load_project(self):
 
@@ -764,9 +769,9 @@ class PSVM(ttk.Frame):
             if os.path.exists(project_dir+"/out/corr") and os.path.exists(project_dir+"/out/stack") and os.path.exists(project_dir+"/out/dvv"):
                 self.current_project_path = project_dir
                 self.status_var.set("Finished loading project.")
-                tk.messagebox.showinfo("SANBA", "Project loaded successfully.")
+                messagebox.showinfo("SANBA", "Project loaded successfully.")
             else:
-                tk.messagebox.showwarning("SANBA", "The selected directory is not a valid project.")
+                messagebox.showwarning("SANBA", "The selected directory is not a valid project.")
                 return
 
     def get_pairs(self):
@@ -800,11 +805,11 @@ class PSVM(ttk.Frame):
 
                     if self.corr_sorting_type == "pairs" or self.corr_sorting_type == "both":
                         if len(stations2use) < 2:
-                            tk.messagebox.showwarning("SANBA", "Current setting for sorting of stations is set to 'pairs' or 'both'. Select at least two stations to continue.")
+                            messagebox.showwarning("SANBA", "Current setting for sorting of stations is set to 'pairs' or 'both'. Select at least two stations to continue.")
                             return
                     elif self.corr_sorting_type == "individual":
                         if len(stations2use) < 1:
-                            tk.messagebox.showwarning("SANBA", "Current setting for sorting of stations is set to 'individual'. Select at least one station to continue.")
+                            messagebox.showwarning("SANBA", "Current setting for sorting of stations is set to 'individual'. Select at least one station to continue.")
                             return
                         
                     pairs = []
@@ -819,16 +824,16 @@ class PSVM(ttk.Frame):
                     self.pairs = pairs
                 
                     self.status_var.set("Finished getting pairs of stations.")
-                    tk.messagebox.showinfo("SANBA", f"A total of {len(pairs)} pair(s) defined for a total of {len(stations2use)} selected station(s)")
+                    messagebox.showinfo("SANBA", f"A total of {len(pairs)} pair(s) defined for a total of {len(stations2use)} selected station(s)")
                     self.top_get_pairs.destroy()
                 
                 ttk.Button(self.top_get_pairs, text="Get pairs", command=done, width=35).pack(pady=5)
 
             else:
-                tk.messagebox.showwarning("SANBA", "No stations were found in the 'data' directory. Add these folders and waveform files to continue.")
+                messagebox.showwarning("SANBA", "No stations were found in the 'data' directory. Add these folders and waveform files to continue.")
             
         else:
-            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
+            messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
 
     '''def spectral_whitening(self, signal, dt, f1, f2):
         # Number of samples in the signal
@@ -1037,487 +1042,673 @@ class PSVM(ttk.Frame):
         return t[(t >= lag0) & (t <= lagu)], pcc[(t >= lag0) & (t <= lagu)], pcc_zero_lag
     
     def correlation(self):
+        if self.current_project_path is None:
+            messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
+            return
 
-        if self.current_project_path == None:
-            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
+        if self.pairs is None:
+            messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
             return
-            
-        if self.pairs == None:
-            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
-            return
+
+        data_dir = os.path.join(self.current_project_path, "data")
+        out_dir = os.path.join(self.current_project_path, "out")
+        corr_root = os.path.join(out_dir, "corr")
+        os.makedirs(corr_root, exist_ok=True)
 
         self.progress["value"] = 0
         self.progress["maximum"] = len(self.pairs)
-        
-        if self.do_crosscomponent_analysis:
-            for pair in self.pairs:
-                station1, station2 = pair
-                dir1 = os.path.join(os.path.join(self.current_project_path, "data"), station1)
-                dir2 = os.path.join(os.path.join(self.current_project_path, "data"), station2)
-                channels1 = [item for item in os.listdir(dir1)]
-                channels2 = [item for item in os.listdir(dir2)]
-                #channel_pairs = [(ch1, ch2) for ch1 in channels1 for ch2 in channels2]
-                channel_pairs = [(ch1, ch2) for ch1 in channels1 for ch2 in channels2 if ch1 <= ch2]
-        else:
-            channel_pairs = [(self.channel_code, self.channel_code)]
 
-        #channel_pairs.remove(('HHE.D', 'HHE.D'))
-        
-        for pair in self.pairs:
+        window_length_samples = int(self.corr_window_size * self.corr_resample_rate)
+        window_step = int(window_length_samples * (1 - self.corr_overlap))
 
-            for channel_pair in channel_pairs:
-            
-                data_dir = os.path.join(self.current_project_path, "data")
-                out_dir = os.path.join(self.current_project_path, "out")
-                resp_dir = os.path.join(self.current_project_path, "data/instrument_response")
-                
-                # split the pair into two stations
-                station1, station2 = pair
-                channel1, channel2 = channel_pair
+        if window_length_samples <= 1:
+            messagebox.showwarning("SANBA", "Correlation window is too short for the current resample rate.")
+            return
 
-                # get the directory paths for the two stations
-                dir1 = os.path.join(data_dir, f"{station1}/{channel1}")
-                dir2 = os.path.join(data_dir, f"{station2}/{channel2}")
+        if window_step <= 0:
+            messagebox.showwarning("SANBA", "Invalid overlap value. The resulting window step must be greater than zero.")
+            return
 
-                # Check if log file exists
-                log_filename = f"log_corr_{station1}_{station2}_{channel1}_{channel2}.txt"
-                log_filepath = os.path.join(out_dir, log_filename)
-                if os.path.isfile(log_filepath):
-                    with open(log_filepath, 'r') as f:
-                        excluded_files = f.read().splitlines()
+        for station1, station2 in self.pairs:
+            try:
+                # --------------------------------------------------------------
+                # Define channel pairs for THIS station pair only
+                # --------------------------------------------------------------
+                if self.do_crosscomponent_analysis:
+                    station1_dir = os.path.join(data_dir, station1)
+                    station2_dir = os.path.join(data_dir, station2)
+
+                    if not os.path.isdir(station1_dir):
+                        print(f"Station directory not found: {station1_dir}")
+                        self.progress["value"] += 1
+                        self.progress.update_idletasks()
+                        continue
+
+                    if not os.path.isdir(station2_dir):
+                        print(f"Station directory not found: {station2_dir}")
+                        self.progress["value"] += 1
+                        self.progress.update_idletasks()
+                        continue
+
+                    channels1 = [
+                        item for item in os.listdir(station1_dir)
+                        if os.path.isdir(os.path.join(station1_dir, item))
+                    ]
+                    channels2 = [
+                        item for item in os.listdir(station2_dir)
+                        if os.path.isdir(os.path.join(station2_dir, item))
+                    ]
+
+                    channel_pairs = [
+                        (ch1, ch2)
+                        for ch1 in channels1
+                        for ch2 in channels2
+                        if ch1 <= ch2
+                    ]
                 else:
-                    excluded_files = []
+                    channel_pairs = [(self.channel_code, self.channel_code)]
 
-                # get the list of miniseed files in each directory
-                files1 = [f for f in os.listdir(dir1) if f not in excluded_files]
-                files2 = [f for f in os.listdir(dir2) if f not in excluded_files]
+                # --------------------------------------------------------------
+                # Process each channel pair
+                # --------------------------------------------------------------
+                for channel1, channel2 in channel_pairs:
+                    self.status_var.set(
+                        f"Running correlation calculation for {station1} {channel1} and {station2} {channel2}"
+                    )
+                    print(
+                        f"Iniciando o método de correlação para {station1} {channel1} e {station2} {channel2}..."
+                    )
 
-                # extract year and julian day from each filename
-                dates1 = [f.split('.')[-2] + '.' + f.split('.')[-1] for f in files1]
-                dates2 = [f.split('.')[-2] + '.' + f.split('.')[-1] for f in files2]
+                    dir1 = os.path.join(data_dir, station1, channel1)
+                    dir2 = os.path.join(data_dir, station2, channel2)
 
-                # find the intersection of the two lists (the matching dates)
-                matching_dates = list(set(dates1) & set(dates2))
+                    if not os.path.isdir(dir1):
+                        print(f"Channel directory not found: {dir1}")
+                        continue
 
-                # sort the matching dates using natsort
-                matching_dates = natsorted(matching_dates)
+                    if not os.path.isdir(dir2):
+                        print(f"Channel directory not found: {dir2}")
+                        continue
 
-                self.status_var.set(f"Running correlation calculation for {station1} {channel1} and {station2} {channel2}")
-                print(f"Iniciando o método xcorr para {station1} {channel1} e {station2} {channel2}...\nDias {matching_dates}")
+                    log_filepath = os.path.join(
+                        out_dir,
+                        f"log_corr_{station1}_{station2}_{channel1}_{channel2}.txt"
+                    )
 
-                # Get waveform files for both stations, excluding the ones already processed
-                files1 = natsorted([f for f in os.listdir(dir1) if f not in excluded_files and any(date in f for date in matching_dates)])#[:3] #-------
-                files2 = natsorted([f for f in os.listdir(dir2) if f not in excluded_files and any(date in f for date in matching_dates)])#[:3] #-------
+                    if os.path.isfile(log_filepath):
+                        with open(log_filepath, "r") as f:
+                            excluded_files = set(line.strip() for line in f if line.strip())
+                    else:
+                        excluded_files = set()
 
-                # Create an empty list to collect names of processed files
-                new_processed_files = []
+                    files1_all = [f for f in os.listdir(dir1) if f not in excluded_files]
+                    files2_all = [f for f in os.listdir(dir2) if f not in excluded_files]
 
-                # Check for output directories and create them if they don't exist
-                corr_path = os.path.join(out_dir, 'corr')
-                os.makedirs(corr_path, exist_ok=True)
-                #station_pair_path = os.path.join(corr_path, "_".join(pair))
-                station_pair_path = os.path.join(corr_path, f"{station1}_{station2}_{channel1}_{channel2}")
-                os.makedirs(station_pair_path, exist_ok=True)
+                    if not files1_all or not files2_all:
+                        print(f"No files to process for {station1}.{channel1} - {station2}.{channel2}")
+                        continue
 
-                # Define the path for the output HDF5 file
-                mseed_file_path = os.path.join(station_pair_path, f"{station1}_{station2}_{channel1}_{channel2}_corr.mseed")
-                #mseed_file_path = os.path.join(station_pair_path,f"corr_{self.correlation_method}_{str(self.corr_min_freq).replace('.', '')}-{str(self.corr_max_freq).replace('.', '')}Hz_{station1}_{station2}_{channel1}_{channel2}.mseed")
+                    # ----------------------------------------------------------
+                    # Find common dates between both stations/channels
+                    # ----------------------------------------------------------
+                    dates1 = [f.split(".")[-2] + "." + f.split(".")[-1] for f in files1_all]
+                    dates2 = [f.split(".")[-2] + "." + f.split(".")[-1] for f in files2_all]
 
-                corr_stream = None
-                
-                if files1 and files2:
-                    # If the mseed file exist, load it as a Stream
+                    matching_dates = natsorted(list(set(dates1) & set(dates2)))
+
+                    if not matching_dates:
+                        print(f"No matching dates for {station1}.{channel1} - {station2}.{channel2}")
+                        continue
+
+                    print(f"Dias {matching_dates}")
+
+                    files1 = natsorted(
+                        [f for f in files1_all if any(date in f for date in matching_dates)]
+                    )
+                    files2 = natsorted(
+                        [f for f in files2_all if any(date in f for date in matching_dates)]
+                    )
+
+                    if not files1 or not files2:
+                        print(f"No matching waveform files for {station1}.{channel1} - {station2}.{channel2}")
+                        continue
+
+                    # ----------------------------------------------------------
+                    # Prepare output stream
+                    # ----------------------------------------------------------
+                    station_pair_path = os.path.join(
+                        corr_root,
+                        f"{station1}_{station2}_{channel1}_{channel2}"
+                    )
+                    os.makedirs(station_pair_path, exist_ok=True)
+
+                    mseed_file_path = os.path.join(
+                        station_pair_path,
+                        f"{station1}_{station2}_{channel1}_{channel2}_corr.mseed"
+                    )
+
                     if os.path.exists(mseed_file_path):
                         corr_stream = read(mseed_file_path, format="MSEED")
-                    else:  # If the mseed file doesn't exists, create an empty Stream
+                    else:
                         corr_stream = Stream()
 
-                    n0_corr_stream = len(corr_stream)
-                
-                for file1, file2 in tqdm(zip(files1, files2), total=len(files1), desc="Processing files\n"):
-                    try:
-                        # Read the data from the files
-                        st1 = read(os.path.join(dir1, file1))#, format="MSEED")
-                        st2 = read(os.path.join(dir2, file2))#, format="MSEED")
+                    # ----------------------------------------------------------
+                    # Process daily waveform files
+                    # ----------------------------------------------------------
+                    for file1, file2 in tqdm(
+                        zip(files1, files2),
+                        total=min(len(files1), len(files2)),
+                        desc="Processing files\n"
+                    ):
+                        try:
+                            st1 = read(os.path.join(dir1, file1))
+                            st2 = read(os.path.join(dir2, file2))
 
-                        window1, window2 = None, None
-                        correlation = None
-                        
-                        # Combine all traces into a single trace if needed
-                        if len(st1) > 1:
-                            st1.merge(method=0, fill_value='interpolate')
-                        if len(st2) > 1:
-                            st2.merge(method=0, fill_value='interpolate')
+                            if len(st1) > 1:
+                                st1.merge(method=0, fill_value="interpolate")
+                            if len(st2) > 1:
+                                st2.merge(method=0, fill_value="interpolate")
 
-                        # Get the later start time and earlier end time
-                        start_time = max(st1[0].stats.starttime, st2[0].stats.starttime)
-                        end_time = min(st1[0].stats.endtime, st2[0].stats.endtime)
+                            # Common overlapping time interval
+                            common_start = max(st1[0].stats.starttime, st2[0].stats.starttime)
+                            common_end = min(st1[0].stats.endtime, st2[0].stats.endtime)
 
-                        # Check if the start time is after the end time
-                        if start_time >= end_time:
-                            print(f'Skipping pair {file1}, {file2} as they do not overlap in time.')
+                            if common_start >= common_end:
+                                print(f"Skipping {file1} and {file2}: no overlap in time.")
+                                del st1, st2
+                                gc.collect()
+                                continue
+
+                            st1.trim(common_start, common_end)
+                            st2.trim(common_start, common_end)
+
+                            # Pre-processing
+                            if self.corr_remove_mean:
+                                st1.detrend("demean")
+                                st2.detrend("demean")
+
+                            if self.corr_remove_trend:
+                                st1.detrend("linear")
+                                st2.detrend("linear")
+
+                            if self.corr_taper:
+                                st1.taper(max_percentage=0.05, type="cosine")
+                                st2.taper(max_percentage=0.05, type="cosine")
+
+                            if self.corr_bandpass_filter:
+                                st1.filter(
+                                    "bandpass",
+                                    freqmin=self.corr_min_freq,
+                                    freqmax=self.corr_max_freq,
+                                    zerophase=True
+                                )
+                                st2.filter(
+                                    "bandpass",
+                                    freqmin=self.corr_min_freq,
+                                    freqmax=self.corr_max_freq,
+                                    zerophase=True
+                                )
+
+                            if self.corr_onebit_norm:
+                                st1[0].data = np.sign(st1[0].data)
+                                st2[0].data = np.sign(st2[0].data)
+
+                            if self.corr_spectral_whitening:
+                                st1[0].data = self.spectral_whitening(
+                                    st1[0].data,
+                                    st1[0].stats.delta,
+                                    self.corr_min_freq,
+                                    self.corr_max_freq
+                                )
+                                st2[0].data = self.spectral_whitening(
+                                    st2[0].data,
+                                    st2[0].stats.delta,
+                                    self.corr_min_freq,
+                                    self.corr_max_freq
+                                )
+
+                            # Resample
+                            st1[0].interpolate(
+                                sampling_rate=self.corr_resample_rate,
+                                method="lanczos",
+                                a=1.0
+                            )
+                            st2[0].interpolate(
+                                sampling_rate=self.corr_resample_rate,
+                                method="lanczos",
+                                a=1.0
+                            )
+
+                            if len(st1[0].data) < window_length_samples or len(st2[0].data) < window_length_samples:
+                                print(f"Skipping {file1} and {file2}: trace shorter than correlation window.")
+                                del st1, st2
+                                gc.collect()
+                                continue
+
+                            # --------------------------------------------------
+                            # Moving-window correlation
+                            # --------------------------------------------------
+                            for n in trange(
+                                0,
+                                len(st1[0].data) - window_length_samples + 1,
+                                window_step,
+                                desc="Processing windows\n"
+                            ):
+                                try:
+                                    window1 = st1[0].data[n:n + window_length_samples]
+                                    window2 = st2[0].data[n:n + window_length_samples]
+
+                                    if self.correlation_method == "cc":
+                                        _, correlation, _ = self.cc(
+                                            window1,
+                                            window2,
+                                            1 / self.corr_resample_rate,
+                                            -self.corr_max_lag,
+                                            self.corr_max_lag
+                                        )
+                                    elif self.correlation_method == "pcc":
+                                        _, correlation, _ = self.pcc2(
+                                            window1,
+                                            window2,
+                                            1 / self.corr_resample_rate,
+                                            -self.corr_max_lag,
+                                            self.corr_max_lag
+                                        )
+                                    else:
+                                        raise ValueError(f"Unknown correlation method: {self.correlation_method}")
+
+                                    if isnan(correlation).any() or isinf(correlation).any():
+                                        continue
+
+                                    # --------------------------------------------------
+                                    # Midpoint timestamp of the original time window
+                                    # --------------------------------------------------
+                                    window_start_time = st1[0].stats.starttime + (n / self.corr_resample_rate)
+                                    window_mid_time = window_start_time + (self.corr_window_size / 2.0)
+
+                                    if len(corr_stream) > 0 and window_mid_time <= corr_stream[-1].stats.starttime:
+                                        continue
+
+                                    corr_trace = Trace(data=np.asarray(correlation, dtype=np.float32))
+                                    corr_trace.stats.starttime = window_mid_time
+                                    corr_trace.stats.sampling_rate = self.corr_resample_rate
+
+                                    corr_stream.append(corr_trace)
+                                    #print(corr_trace.stats.starttime)
+
+                                except Exception as e:
+                                    print(f"Error processing window in {file1} / {file2}: {e}")
+                                    continue
+
+                            # Log processed files
+                            with open(log_filepath, "a") as f:
+                                f.write(file1 + "\n")
+                                f.write(file2 + "\n")
+
+                            del st1, st2
+                            gc.collect()
+
+                        except Exception as e:
+                            print(f"Deu ruim no {file1} e {file2}")
+                            print(e)
                             continue
 
-                        # Trim both streams
-                        st1.trim(start_time, end_time)
-                        st2.trim(start_time, end_time)
-                        
-                        # Detrend, demean, taper
-                        if self.corr_remove_mean:
-                            st1.detrend('demean')
-                            st2.detrend('demean')
+                    # ----------------------------------------------------------
+                    # Save and plot results
+                    # ----------------------------------------------------------
+                    if len(corr_stream) > 0:
+                        corr_stream.write(mseed_file_path, format="MSEED", dtype="float32")
 
-                        if self.corr_remove_trend:
-                            st1.detrend('linear')
-                            st2.detrend('linear')
+                        if self.corr_plot:
+                            self.ax.clear()
 
-                        if self.corr_taper:
-                            st1.taper(max_percentage=0.05, type='cosine')
-                            st2.taper(max_percentage=0.05, type='cosine')
+                            n_traces = len(corr_stream)
+                            n_samples = len(corr_stream[0].data)
+                            data = np.zeros((n_traces, n_samples), dtype=float)
 
-                        # Bandpass filter
-                        if self.corr_bandpass_filter:
-                            st1.filter('bandpass', freqmin=self.corr_min_freq, freqmax=self.corr_max_freq, zerophase=True)
-                            st2.filter('bandpass', freqmin=self.corr_min_freq, freqmax=self.corr_max_freq, zerophase=True)
-                            #st1.filter('highpass', freq=49, zerophase=True)
-                            #st2.filter('highpass', freq=49, zerophase=True)
-                     
-                        # One-bit normalization
-                        if self.corr_onebit_norm:
-                            st1[0].data = np.sign(st1[0].data)
-                            st2[0].data = np.sign(st2[0].data)
-                        
-                        # Spectral whitening
-                        if self.corr_spectral_whitening:
-                            #st1[0].data = ifft(whiten(st1[0].data, len(st1[0].data), st1[0].stats.delta, float(self.corr_min_freq), float(self.corr_max_freq))).real
-                            #st2[0].data = ifft(whiten(st2[0].data, len(st2[0].data), st2[0].stats.delta, float(self.corr_min_freq), float(self.corr_max_freq))).real
-                            st1[0].data = self.spectral_whitening(st1[0].data,st1[0].stats.delta,self.corr_min_freq,self.corr_max_freq)
-                            st2[0].data = self.spectral_whitening(st2[0].data,st2[0].stats.delta,self.corr_min_freq,self.corr_max_freq)
-
-                        # Resample the streams
-                        st1[0].interpolate(sampling_rate=self.corr_resample_rate, method='lanczos', a=1.0)
-                        st2[0].interpolate(sampling_rate=self.corr_resample_rate, method='lanczos', a=1.0)
-                        #st1.interpolate(sampling_rate=100, method='lanczos', a=1.0)
-                        #st2.interpolate(sampling_rate=100, method='lanczos', a=1.0)
-                                
-                        # Iterate over windows with overlap
-                        window_length_samples = int(self.corr_window_size * self.corr_resample_rate)
-                        window_step = int(window_length_samples * (1 - self.corr_overlap / 100))
-                        #max_lag_samples = int(max_lag * resample_rate)
-
-                        for n in trange(0, len(st1[0].data) - window_length_samples, window_step, desc="Processing windows\n"):
-
-                            try:
-                                window1 = st1[0].data[n:n+window_length_samples]
-                                window2 = st2[0].data[n:n+window_length_samples]
-
-                                # Cross-correlation
-                                if self.correlation_method == "cc":
-                                    #correlation = correlate(window1, window2, shift =  int(self.corr_max_lag*st1[0].stats.sampling_rate),
-                                    #                        demean = False, normalize = None, method = "direct")
-                                    timevec, correlation, cc_zero_lag = self.cc(window1, window2, 1/self.corr_resample_rate, -self.corr_max_lag, self.corr_max_lag)
-                                    
-                                # Phase cross-correlation
-                                if self.correlation_method == "pcc":
-                                    timevec, correlation, pcc_zero_lag = self.pcc2(window1, window2, 1/self.corr_resample_rate, -self.corr_max_lag, self.corr_max_lag)
-                                
-                                # Check for nan and inf values
-                                if not (isnan(correlation).any() or isinf(correlation).any()):
-                                    # Get the start time for the window
-                                    start_time = st1[0].stats.starttime + n / self.corr_resample_rate
-
-                                    # Signal-to-noise ratio (SNR) check
-                                    signal = np.max(np.abs(correlation))  # the peak of the CCF
-                                    noise = np.std(correlation)  # the standard deviation of the CCF
-                                    #print(signal / noise)
-                                    if signal / noise >= self.corr_snr_threshold:
-                                        if len(corr_stream) > 0:
-                                            if start_time <= corr_stream[-1].stats.starttime:
-                                                continue
-
-                                        # Create a new Trace with the cross-correlation results
-                                        corr_trace = Trace(data=correlation)
-                                        corr_trace.stats.starttime = start_time
-                                        corr_trace.stats.sampling_rate = self.corr_resample_rate
-                                        
-                                        #corr_trace.filter('bandpass', freqmin=self.corr_min_freq, freqmax=self.corr_max_freq, zerophase=True)
-
-                                        corr_stream.append(corr_trace)
+                            for i, tr in enumerate(corr_stream):
+                                max_amp = np.max(np.abs(tr.data))
+                                if max_amp > 0:
+                                    data[i, :] = tr.data / max_amp
                                 else:
-                                    print(correlation)
-                                    
-                            except Exception as e: print(e)#continue
+                                    data[i, :] = tr.data
 
-                        # Clear the data which are not needed anymore
-                        del st1
-                        del st2
-                        del window1
-                        del window2
-                        del correlation
-                        gc.collect()
-                        
-                        # At the end of processing, append newly processed files to the log
-                        with open(log_filepath, 'a') as f:
-                            f.write(file1 + '\n')
-                            f.write(file2 + '\n')
+                            start_times = [tr.stats.starttime.datetime for tr in corr_stream]
+                            end_times = [tr.stats.endtime.datetime for tr in corr_stream]
+                            lag = np.linspace(-self.corr_max_lag, self.corr_max_lag, n_samples)
 
-                    except Exception as e:
-                        print(f"Deu ruim no {file1} e {file2}")
-                        print(e)
-                        continue
-                    
-                if corr_stream:     
-                    # Save the mseed as a mseed file
-                    corr_stream.write(mseed_file_path, 'MSEED', dtype='float16')
-                    
-                    if self.corr_plot:
+                            self.ax.imshow(
+                                data,
+                                aspect="auto",
+                                cmap="seismic",
+                                origin="lower",
+                                interpolation="bilinear",
+                                extent=[
+                                    lag[0],
+                                    lag[-1],
+                                    mdates.date2num(start_times[0]),
+                                    mdates.date2num(end_times[-1])
+                                ]
+                            )
 
-                        self.ax.clear()
-                        
-                        # Prepare the data for plotting
-                        n_traces = len(corr_stream)
-                        data = np.zeros((n_traces, len(corr_stream[0].data)))
-                        
-                        for i, tr in enumerate(corr_stream):
-                            data[i, :] = tr.data/max(abs(tr.data))
+                            self.ax.set_title(
+                                f"Correlation functions over time | "
+                                f"{station1}.{channel1} - {station2}.{channel2} | "
+                                f"{self.corr_min_freq} - {self.corr_max_freq} Hz"
+                            )
+                            self.ax.yaxis_date()
+                            self.ax.yaxis.set_major_formatter(mdates.DateFormatter("%d/%m/%Y %H:%M"))
+                            self.ax.set_xlabel("Time lag (s)")
+                            self.ax.set_ylabel("Time (dd/mm/yyyy hh:mm)")
 
-                        # Prepare time and lag arrays
-                        start_times = [tr.stats.starttime.datetime for tr in corr_stream]
-                        end_times = [tr.stats.endtime.datetime for tr in corr_stream]
-                        n_samples = len(corr_stream[0])
-                        dt = corr_stream[0].stats.delta
-                        lag = np.linspace(-self.corr_max_lag, self.corr_max_lag, n_samples)
+                            self.ax2.set_ylabel("")
+                            self.ax2.set_yticks([])
+                            self.ax2.tick_params(right=False, labelright=False)
 
-                        # Create an image of the data
-                        im = self.ax.imshow(data, aspect='auto', cmap='seismic', origin='lower',interpolation='bilinear',
-                                       extent=[lag[0], lag[-1], mdates.date2num(start_times[0]),
-                                               mdates.date2num(end_times[-1])])
+                            self.ax.figure.canvas.draw()
 
-                        self.ax.set_title(f"Correlation functions over time | {station1}.{channel1} - {station2}.{channel2} | {self.corr_min_freq} - {self.corr_max_freq} Hz")
-                        # Format the y-axis to display dates
-                        self.ax.yaxis_date()
-                        #self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
-                        #self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-                        self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y %H:%M'))
+                            self.fig.savefig(
+                                os.path.join(
+                                    station_pair_path,
+                                    f"{station1}_{station2}_{channel1}_{channel2}_corr.png"
+                                ),
+                                dpi=300
+                            )
 
-                        # Set the x and y labels
-                        #self.ax.set_xlabel('Lag-time (s)')
-                        #self.ax.set_ylabel('Start time')
-                        self.ax.set_xlabel('Time lag (s)')
-                        self.ax.set_ylabel('Time (dd/mm/yyyy hh:mm)')
+                    self.status_var.set(
+                        f"Correlation calculation for {station1} {channel1} and {station2} {channel2} completed"
+                    )
 
-                        # Add a colorbar
-                        #self.fig.colorbar(im, ax=self.ax, label='Cross-correlation')
-
-                        # Hide everything from the twin axis
-                        self.ax2.set_ylabel("")
-                        self.ax2.set_yticks([])
-                        self.ax2.tick_params(right=False, labelright=False)
-                
-                        self.ax.figure.canvas.draw()
-
-                        self.fig.savefig(os.path.join(station_pair_path, f'{station1}_{station2}_{channel1}_{channel2}_corr.png'), dpi=300)
-
-                self.status_var.set(f"Correlation calculation for {station1} {channel1} and {station2} {channel2} completed")
-                self.progress.update_idletasks()
                 self.progress["value"] += 1
+                self.progress.update_idletasks()
+
+            except Exception as e:
+                print(f"Error processing pair {station1} - {station2}: {e}")
+                self.progress["value"] += 1
+                self.progress.update_idletasks()
+                continue
 
     def stack(self):
+        if self.current_project_path is None:
+            messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
+            return
 
-        if self.current_project_path == None:
-            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
+        if self.pairs is None:
+            messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
             return
-            
-        if self.pairs == None:
-            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
-            return
+
+        data_dir = os.path.join(self.current_project_path, "data")
+        out_dir = os.path.join(self.current_project_path, "out")
+        corr_root = os.path.join(out_dir, "corr")
+        stack_root = os.path.join(out_dir, "stack")
+        os.makedirs(stack_root, exist_ok=True)
 
         self.progress["value"] = 0
         self.progress["maximum"] = len(self.pairs)
 
-        if self.do_crosscomponent_analysis:
-            for pair in self.pairs:
-                station1, station2 = pair
-                dir1 = os.path.join(os.path.join(self.current_project_path, "data"), station1)
-                dir2 = os.path.join(os.path.join(self.current_project_path, "data"), station2)
-                channels1 = [item for item in os.listdir(dir1)]
-                channels2 = [item for item in os.listdir(dir2)]
-                #channel_pairs = [(ch1, ch2) for ch1 in channels1 for ch2 in channels2]
-                channel_pairs = [(ch1, ch2) for ch1 in channels1 for ch2 in channels2 if ch1 <= ch2]
-        else:
-            channel_pairs = [(self.channel_code, self.channel_code)]
-        
-        for pair in self.pairs:
+        for station1, station2 in self.pairs:
+            try:
+                # --------------------------------------------------------------
+                # Define channel pairs for THIS station pair only
+                # --------------------------------------------------------------
+                if self.do_crosscomponent_analysis:
+                    station1_dir = os.path.join(data_dir, station1)
+                    station2_dir = os.path.join(data_dir, station2)
 
-            for channel_pair in channel_pairs:
-            
-                data_dir = os.path.join(self.current_project_path, "data")
-                out_dir = os.path.join(self.current_project_path, "out")
-                
-                station1, station2 = pair
-                channel1, channel2 = channel_pair
+                    if not os.path.isdir(station1_dir):
+                        print(f"Station directory not found: {station1_dir}")
+                        self.progress["value"] += 1
+                        self.progress.update_idletasks()
+                        continue
 
-                self.status_var.set(f"Running stacking for {station1} {channel1} and {station2} {channel2}")
-                print(f"Iniciando o método stack para {station1} {channel1} e {station2} {channel2}...")
-                
-                stack_path = os.path.join(self.current_project_path, "out/stack")
-                pair_path = os.path.join(stack_path, f'{station1}_{station2}_{channel1}_{channel2}')
+                    if not os.path.isdir(station2_dir):
+                        print(f"Station directory not found: {station2_dir}")
+                        self.progress["value"] += 1
+                        self.progress.update_idletasks()
+                        continue
 
-                # Check and create necessary directories
-                if not os.path.exists(stack_path):
-                    os.makedirs(stack_path)
-                if not os.path.exists(pair_path):
-                    os.makedirs(pair_path)
+                    channels1 = [
+                        item for item in os.listdir(station1_dir)
+                        if os.path.isdir(os.path.join(station1_dir, item))
+                    ]
+                    channels2 = [
+                        item for item in os.listdir(station2_dir)
+                        if os.path.isdir(os.path.join(station2_dir, item))
+                    ]
 
-                # Window length in files
-                #window_length = self.stack_window_length_days * int(86400 / self.corr_window_size)
-                window_length = int(self.stack_window_length_days * int(86400 / self.corr_window_size))
+                    channel_pairs = [
+                        (ch1, ch2)
+                        for ch1 in channels1
+                        for ch2 in channels2
+                        if ch1 <= ch2
+                    ]
+                else:
+                    channel_pairs = [(self.channel_code, self.channel_code)]
 
-                # Read the Stream from the mseed file
-                corr_path = os.path.join(out_dir, 'corr', f'{station1}_{station2}_{channel1}_{channel2}', f"{station1}_{station2}_{channel1}_{channel2}_corr.mseed")
-                corr_stream = read(corr_path)
+                # --------------------------------------------------------------
+                # Process each channel pair
+                # --------------------------------------------------------------
+                for channel1, channel2 in channel_pairs:
+                    self.status_var.set(
+                        f"Running stacking for {station1} {channel1} and {station2} {channel2}"
+                    )
+                    print(f"Iniciando o método stack para {station1} {channel1} e {station2} {channel2}...")
 
-                # Define the path for the output HDF5 file
-                stack_mseed_file_path = os.path.join(pair_path, f"{station1}_{station2}_{channel1}_{channel2}_stacks.mseed")
+                    pair_name = f"{station1}_{station2}_{channel1}_{channel2}"
+                    pair_stack_dir = os.path.join(stack_root, pair_name)
+                    os.makedirs(pair_stack_dir, exist_ok=True)
 
-                # If the mseed file exist, load it as a Stream
-                if os.path.exists(stack_mseed_file_path):
-                    stacks_stream = read(stack_mseed_file_path, format="MSEED")
-                else:  # If the mseed file doesn't exists, create an empty Stream
-                    stacks_stream = Stream()
+                    corr_path = os.path.join(corr_root, pair_name, f"{pair_name}_corr.mseed")
+                    stack_mseed_file_path = os.path.join(pair_stack_dir, f"{pair_name}_stacks.mseed")
 
-                # Create a flag for new traces
-                new_trace_added = False
+                    if not os.path.exists(corr_path):
+                        print(f"Correlation file not found: {corr_path}")
+                        continue
 
-                # Create a list to hold indices to delete
-                indices_to_delete = []
-
-                # Iterate over traces in the Stream
-                for i in tqdm(range(0, len(corr_stream)), desc="Processing windows for stacking\n"):
                     try:
-                        window_range = corr_stream[i:min(i+window_length, len(corr_stream))]
-                        correlations = []
-                        central_times = []
+                        corr_stream = read(corr_path, format="MSEED")
+                    except Exception as e:
+                        print(f"Error reading correlation file {corr_path}: {e}")
+                        continue
 
-                        if len(stacks_stream) > 0:
-                            if window_range[0].stats.starttime - stacks_stream[-1].stats.starttime < self.corr_window_size:
-                                continue
-                        
-                        # If window_range is empty, continue to the next iteration
-                        if not window_range:
-                            continue
+                    if len(corr_stream) == 0:
+                        print(f"No correlation traces found in {corr_path}")
+                        continue
 
-                        # Check if the time_difference is not greater than window_length_days
-                        time_difference = (window_range[-1].stats.starttime - window_range[0].stats.starttime) / (60 * 60 * 24)  # in days
-                        
-                        while time_difference > self.stack_window_length_days:
+                    corr_stream.sort(keys=["starttime"])
+
+                    # ----------------------------------------------------------
+                    # Load existing stacks if present
+                    # ----------------------------------------------------------
+                    if os.path.exists(stack_mseed_file_path):
+                        try:
+                            stacks_stream = read(stack_mseed_file_path, format="MSEED")
+                            stacks_stream.sort(keys=["starttime"])
+                        except Exception as e:
+                            print(f"Error reading existing stacks file {stack_mseed_file_path}: {e}")
+                            stacks_stream = Stream()
+                    else:
+                        stacks_stream = Stream()
+
+                    # Timestamp of the last stack that already existed BEFORE this run
+                    if len(stacks_stream) > 0:
+                        existing_last_stack_time = stacks_stream[-1].stats.starttime
+                    else:
+                        existing_last_stack_time = None
+
+                    # ----------------------------------------------------------
+                    # Estimate correlation time step from timestamps
+                    # ----------------------------------------------------------
+                    if len(corr_stream) >= 2:
+                        corr_dt_seconds = float(
+                            corr_stream[1].stats.starttime - corr_stream[0].stats.starttime
+                        )
+                    else:
+                        corr_dt_seconds = float(self.corr_window_size * (1.0 - self.corr_overlap))
+
+                    if corr_dt_seconds <= 0:
+                        corr_dt_seconds = float(self.corr_window_size * (1.0 - self.corr_overlap))
+
+                    # Approximate number of traces needed to cover the requested stack window
+                    approx_window_length = max(
+                        2,
+                        int(np.ceil(self.stack_window_length_days * 86400.0 / corr_dt_seconds))
+                    )
+
+                    new_trace_added = False
+                    last_consumed_index = -1
+
+                    # ----------------------------------------------------------
+                    # Build moving stacks
+                    # ----------------------------------------------------------
+                    for i in tqdm(range(len(corr_stream)), desc="Processing windows for stacking\n"):
+                        try:
+                            window_range = corr_stream[i:min(i + approx_window_length, len(corr_stream))]
+
                             if len(window_range) < 2:
-                                break
-                            # Remove the last trace
-                            window_range = window_range[:-1]
-                            # Recalculate time_difference
-                            time_difference = (window_range[-1].stats.starttime - window_range[0].stats.starttime) / (60 * 60 * 24)  # in days
-                        
-                        # If window_range has less than 2 traces, skip
-                        if len(window_range) < 2:
+                                continue
+
+                            # Trim so actual time span does not exceed stack_window_length_days
+                            while len(window_range) >= 2:
+                                time_difference_days = float(
+                                    window_range[-1].stats.starttime - window_range[0].stats.starttime
+                                ) / 86400.0
+
+                                if time_difference_days <= self.stack_window_length_days:
+                                    break
+
+                                window_range = window_range[:-1]
+
+                            if len(window_range) < 2:
+                                continue
+
+                            # Midpoint timestamp of the stacked window
+                            first_time = window_range[0].stats.starttime
+                            last_time = window_range[-1].stats.starttime
+                            midpoint_time = first_time + (last_time - first_time) / 2.0
+
+                            # Skip only stacks that were already generated in previous runs
+                            if existing_last_stack_time is not None and midpoint_time <= existing_last_stack_time:
+                                continue
+
+                            correlations = [tr.data for tr in window_range]
+                            avg_correlation = np.mean(correlations, axis=0)
+
+                            new_trace = Trace(data=np.asarray(avg_correlation, dtype=np.float32))
+                            new_trace.stats.starttime = midpoint_time
+                            new_trace.stats.sampling_rate = self.corr_resample_rate
+                            stacks_stream.append(new_trace)
+
+                            new_trace_added = True
+
+                            # Keep enough tail for future runs:
+                            # traces strictly before the last trace used here can be dropped,
+                            # but keep the last trace because it may participate in future stacks
+                            current_last_index = i + len(window_range) - 1
+                            last_consumed_index = max(last_consumed_index, current_last_index - 1)
+
+                            del correlations
+                            del window_range
+                            gc.collect()
+
+                        except Exception as e:
+                            print(f"Error while stacking {pair_name} at window index {i}: {e}")
                             continue
-                        
-                        for tr in window_range:
-                            correlations.append(tr.data)
-                            #central_times.append(tr.stats.starttime.timestamp)
-                        
-                        avg_correlation = np.mean(correlations, axis=0)
-                        #central_timestamp = np.mean(central_times)
-                        central_timestamp = window_range[0].stats.starttime.timestamp
 
-                        # Delete the first trace in the window_range after processing
-                        if i > 0:  # Skip the first iteration because there is no previous trace to delete
-                            indices_to_delete.append(i-1)
+                    # ----------------------------------------------------------
+                    # Keep only the residual tail of corr_stream for future runs
+                    # ----------------------------------------------------------
+                    if last_consumed_index >= 0:
+                        residual_start = last_consumed_index + 1
+                        corr_stream = corr_stream[residual_start:]
 
-                        new_trace = Trace(data=avg_correlation)
-                        new_trace.stats.starttime = central_timestamp
-                        new_trace.stats.sampling_rate = self.corr_resample_rate
-                        stacks_stream.append(new_trace)
-                        #last_trace_time = central_timestamp  # update the last_trace_time
-                        new_trace_added = True
-                            
-                        # Check if the last trace of stream was included in window_range
-                        if corr_stream[-1] in window_range:
-                            indices_to_delete.append(i)
-                            break
+                    # ----------------------------------------------------------
+                    # Save results
+                    # ----------------------------------------------------------
+                    if new_trace_added:
+                        stacks_stream.sort(keys=["starttime"])
+                        corr_stream.sort(keys=["starttime"])
 
-                        del correlations
-                        del central_times
-                        del window_range
-                        gc.collect()
-                        
-                    except Exception as e: print(e)
-                    
-                # After the loop, delete the collected indices:
-                for index in sorted(indices_to_delete, reverse=True):
-                    del corr_stream[index]
-                
-                if new_trace_added:
-                    
-                    # Save the stack Stream to a mseed file
-                    stacks_stream.write(stack_mseed_file_path, format='MSEED', mode='w', dtype='float16')
+                        stacks_stream.write(
+                            stack_mseed_file_path,
+                            format="MSEED",
+                            mode="w",
+                            dtype="float32"
+                        )
 
-                    # Save the xcorr Stream to a mseed file
-                    corr_stream.write(corr_path, format='MSEED', dtype='float16')
+                        corr_stream.write(
+                            corr_path,
+                            format="MSEED",
+                            dtype="float32"
+                        )
 
-                    if self.stack_plot:
+                        if self.stack_plot and len(stacks_stream) > 0:
+                            self.ax.clear()
+                            self.ax2.clear()
 
-                        self.ax.clear()
-                        self.ax2.clear()
+                            n_traces = len(stacks_stream)
+                            n_samples = len(stacks_stream[0].data)
+                            data = np.zeros((n_traces, n_samples), dtype=float)
 
-                        # Prepare the data for plotting
-                        n_traces = len(stacks_stream)
-                        data = np.zeros((n_traces, len(stacks_stream[0].data)))
-                        for i, tr in enumerate(stacks_stream):
-                            data[i, :] = tr.data/max(abs(tr.data))
+                            for j, tr in enumerate(stacks_stream):
+                                max_amp = np.max(np.abs(tr.data))
+                                if max_amp > 0:
+                                    data[j, :] = tr.data / max_amp
+                                else:
+                                    data[j, :] = tr.data
 
-                        # Prepare time and lag arrays
-                        start_times = [tr.stats.starttime.datetime for tr in stacks_stream]
-                        end_times = [tr.stats.endtime.datetime for tr in stacks_stream]
-                        n_samples = len(stacks_stream[0])
-                        dt = stacks_stream[0].stats.delta
-                        lag = np.linspace(-self.corr_max_lag, self.corr_max_lag, n_samples)
+                            start_times = [tr.stats.starttime.datetime for tr in stacks_stream]
+                            end_times = [tr.stats.endtime.datetime for tr in stacks_stream]
+                            lag = np.linspace(-self.corr_max_lag, self.corr_max_lag, n_samples)
 
-                        # Create an image of the data
-                        im = self.ax.imshow(data, aspect='auto', cmap='seismic', origin='lower',interpolation='bilinear',
-                                       extent=[lag[0], lag[-1], mdates.date2num(start_times[0]),
-                                               mdates.date2num(end_times[-1])])
+                            self.ax.imshow(
+                                data,
+                                aspect="auto",
+                                cmap="seismic",
+                                origin="lower",
+                                interpolation="bilinear",
+                                extent=[
+                                    lag[0],
+                                    lag[-1],
+                                    mdates.date2num(start_times[0]),
+                                    mdates.date2num(end_times[-1])
+                                ]
+                            )
 
-                        self.ax.set_title(f"Stacked correlation functions over time | {station1}.{channel1} - {station2}.{channel2} | {self.stack_window_length_days:.1f} day(s)")
-                        
-                        # Format the y-axis to display dates
-                        self.ax.yaxis_date()
-                        #self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
-                        #self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-                        self.ax.yaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y %H:%M'))
+                            self.ax.set_title(
+                                f"Stacked correlation functions over time | "
+                                f"{station1}.{channel1} - {station2}.{channel2} | "
+                                f"{self.stack_window_length_days:.1f} day(s)"
+                            )
 
-                        # Set the x and y labels
-                        #self.ax.set_xlabel('Lag Time (s)')
-                        #self.ax.set_ylabel('Start Time')
-                        self.ax.set_xlabel('Time lag (s)')
-                        self.ax.set_ylabel('Time (dd/mm/yyyy hh:mm)')
+                            self.ax.yaxis_date()
+                            self.ax.yaxis.set_major_formatter(mdates.DateFormatter("%d/%m/%Y %H:%M"))
+                            self.ax.set_xlabel("Time lag (s)")
+                            self.ax.set_ylabel("Time (dd/mm/yyyy hh:mm)")
 
+                            self.ax2.set_ylabel("")
+                            self.ax2.set_yticks([])
+                            self.ax2.tick_params(right=False, labelright=False)
 
-                        # Add a colorbar
-                        #self.fig.colorbar(im, ax=self.ax, label='Cross-correlation')
+                            self.fig.canvas.draw()
 
-                        # Hide everything from the twin axis
-                        self.ax2.set_ylabel("")
-                        self.ax2.set_yticks([])
-                        self.ax2.tick_params(right=False, labelright=False)
-                
-                        self.fig.canvas.draw()
+                            self.fig.savefig(
+                                os.path.join(pair_stack_dir, f"{pair_name}_stack.png"),
+                                dpi=300
+                            )
 
-                        self.fig.savefig(os.path.join(pair_path, f'{station1}_{station2}_{channel1}_{channel2}_stack.png'), dpi=300)
-                        
-                self.status_var.set(f"Stacking for {station1} {channel1} and {station2} {channel2} completed")
-                self.progress.update_idletasks()
+                    self.status_var.set(
+                        f"Stacking for {station1} {channel1} and {station2} {channel2} completed"
+                    )
+
                 self.progress["value"] += 1
+                self.progress.update_idletasks()
+
+            except Exception as e:
+                print(f"Error processing pair {station1} - {station2}: {e}")
+                self.progress["value"] += 1
+                self.progress.update_idletasks()
+                continue
 
     def moving_window_crosscorrelation(self, s1, s2, fs, window_length, step_size):
         # Convert window length and step size from seconds to samples
@@ -1764,343 +1955,460 @@ class PSVM(ttk.Frame):
         return np.array([time_axis, delta_t, delta_err, delta_mcoh]).T
     
     def compute_dvv(self):
-        
-        if self.current_project_path == None:
-            tk.messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
+        if self.current_project_path is None:
+            messagebox.showwarning("SANBA", "No project path detected. Create or load a project to continue.")
             return
-            
-        if self.pairs == None:
-            tk.messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
+
+        if self.pairs is None:
+            messagebox.showwarning("SANBA", "No pair(s) of station(s) detected. Select stations to continue.")
             return
+
+        data_dir = os.path.join(self.current_project_path, "data")
+        out_dir = os.path.join(self.current_project_path, "out")
+        stack_root = os.path.join(out_dir, "stack")
+        dvv_root = os.path.join(out_dir, "dvv")
+        os.makedirs(dvv_root, exist_ok=True)
 
         self.progress["value"] = 0
         self.progress["maximum"] = len(self.pairs)
 
-        if self.do_crosscomponent_analysis:
-            for pair in self.pairs:
-                station1, station2 = pair
-                dir1 = os.path.join(os.path.join(self.current_project_path, "data"), station1)
-                dir2 = os.path.join(os.path.join(self.current_project_path, "data"), station2)
-                channels1 = [item for item in os.listdir(dir1)]
-                channels2 = [item for item in os.listdir(dir2)]
-                #channel_pairs = [(ch1, ch2) for ch1 in channels1 for ch2 in channels2]
-                channel_pairs = [(ch1, ch2) for ch1 in channels1 for ch2 in channels2 if ch1 <= ch2]
-        else:
-            channel_pairs = [(self.channel_code, self.channel_code)]
-                            
-        for pair in self.pairs:
+        for station1, station2 in self.pairs:
+            try:
+                # --------------------------------------------------------------
+                # Define channel pairs for THIS station pair only
+                # --------------------------------------------------------------
+                if self.do_crosscomponent_analysis:
+                    station1_dir = os.path.join(data_dir, station1)
+                    station2_dir = os.path.join(data_dir, station2)
 
-            for channel_pair in channel_pairs:
-
-                station1, station2 = pair
-                channel1, channel2 = channel_pair
-                
-                self.status_var.set(f"Running the MWCS method for {station1} {channel1} and {station2} {channel2}")
-                print(f"Iniciando o método mwcs para {station1} {channel1} e {station2} {channel2} ({self.mwcs_freq_min}-{self.mwcs_freq_max}Hz)...")
-
-                out_dir = os.path.join(self.current_project_path, "out")
-                stack_path = os.path.join(out_dir, 'stack', f'{station1}_{station2}_{channel1}_{channel2}')
-                #stack_path = os.path.join(self.stack_path_temp, f'{station1}_{station2}_{channel1}_{channel2}')
-                dvv_path = os.path.join(out_dir, 'dvv', f'{station1}_{station2}_{channel1}_{channel2}')
-                log_file = os.path.join(out_dir, f'log_mwcs_{station1}_{station2}_{channel1}_{channel2}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz.txt')
-                csv_file = os.path.join(dvv_path, f'{station1}_{station2}_{channel1}_{channel2}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_dvv.csv')
-
-                if not os.path.exists(dvv_path):
-                    os.makedirs(dvv_path)
-                
-                if not os.path.isfile(log_file):
-                    with open(log_file, 'w') as lf:
-                        lf.write('')
-
-                # Reading logged traces
-                with open(log_file, 'r') as lf:
-                    logged_indices = [int(line.strip()) for line in lf]
-                    
-                # Load stack Stream from the mseed file
-                stack_stream = read(os.path.join(stack_path, f"{station1}_{station2}_{channel1}_{channel2}_stacks.mseed"), format="MSEED")
-                #stack_stream.filter('bandpass', freqmin=self.mwcs_freq_min, freqmax=self.mwcs_freq_max, zerophase=True)
-
-                # Define reference_correlation
-                if self.mwcs_reference == "static":
-                    reference_correlation = stack_stream[0].data
-                elif self.mwcs_reference == "mean":
-                    reference_correlation = np.mean([trace.data for trace in stack_stream], axis=0)
-                
-                results = pd.DataFrame(columns=['timestamp', 'dvv', 'dvv_std'])
-
-                if self.mwcs_do_similarity_analysis:
-                    similarity_csv_file = os.path.join(dvv_path, f'{station1}_{station2}_{channel1}_{channel2}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_similarity.csv')
-                    similarity_results = pd.DataFrame(columns=['timestamp', 'central_lag', 'similarity'])
-                    
-##                STRETCH_PCTS = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.4, 0.3, 0.2, 0.1, 0,
-##                    -0.1, -0.2, -0.3, -0.4, -0.5, -0.4, -0.3, -0.2, -0.1, 0]
-                
-                for i in tqdm(range(len(stack_stream)), desc="Processing traces for mwcs\n"):
-                    try:
-                        if i in logged_indices:
-                            continue
-
-                        with open(log_file, 'a') as lf:
-                            lf.write(str(i) + '\n')
-
-                        current_data = stack_stream[i].data
-
-                        if self.mwcs_reference == "following":
-                            if i == 0:
-                                reference_correlation = stack_stream[0].data
-                            else:
-                                reference_correlation = stack_stream[i-1].data
-
-                        if self.mwcs_do_similarity_analysis:
-                            #for each dv/v measurement, a zero-lag waveform similarity value
-                            if self.mwcs_similarity_method == "zero_lag_cc":
-                                _, _, corr_zero_lag = self.cc(current_data, reference_correlation, 1/self.corr_resample_rate, -self.corr_max_lag, self.corr_max_lag)
-                                
-                            elif self.mwcs_similarity_method == "zero_lag_pcc":
-                                _, _, corr_zero_lag = self.pcc2(current_data, reference_correlation, 1/self.corr_resample_rate, -self.corr_max_lag, self.corr_max_lag)
-
-                            #for each dv/v measurement, a zero-lag time-dependent waveform similarity value
-                            similarity = self.moving_window_crosscorrelation(current_data, reference_correlation, self.corr_resample_rate,
-                                                                            self.mwcs_window_length, self.mwcs_window_step)
-                                                
-                        mwcs_data = self.mwcs(current=current_data, 
-                                                reference=reference_correlation, 
-                                                df=self.corr_resample_rate, 
-                                                freqmin=self.mwcs_freq_min, 
-                                                freqmax=self.mwcs_freq_max, 
-                                                tmin=self.mwcs_moving_start,
-                                                window_length=self.mwcs_window_length, 
-                                                step=self.mwcs_window_step)
-                        
-                        time_axis = mwcs_data.T[0]
-                        delay_time = mwcs_data.T[1]
-                        err = mwcs_data.T[2]
-                        coh = mwcs_data.T[3]
-
-                        # Filter based on criteria
-                        mask = (np.abs(time_axis) >= self.mwcs_lagtime_ballistic) & (np.abs(time_axis) <= self.mwcs_lagtime_max-(self.mwcs_window_length/2))
-                        #mask = ~((time_axis >= -3.0) & (time_axis <= -1.0)) & (time_axis <= 4) 
-                        mask &= (coh >= self.mwcs_coherency_min)
-                        mask &= (err <= self.mwcs_error_max)
-                        mask &= (np.abs(delay_time) <= self.mwcs_abs_delay_time_limit)
-
-                        time_axis_filtered = time_axis[mask]
-                        delay_time_filtered = delay_time[mask]
-                        err_filtered = err[mask]
-                        
-                        # Perform linear regression
-                        slope, intercept, std, n = linear_regression(time_axis_filtered,delay_time_filtered,
-                                                weights = 1/err_filtered, intercept_origin = False)
-
-                        # Check if slope and std are valid numbers
-                        if np.isnan(slope) or np.isinf(slope) or np.isnan(std) or np.isinf(std):
-                            print("regressão linear falhou")
-                            continue
-
-                        # Compute dvv and dvv_std
-                        dvv = -100 * slope
-                        dvv_std = 100 * std
-
-                        # Save to results
-                        timestamp = stack_stream[i].stats.starttime.timestamp
-
-                        if self.mwcs_do_similarity_analysis:
-                            #results = results.append({'timestamp': timestamp, 'dvv': dvv, 'dvv_std': dvv_std, 'similarity': corr_zero_lag}, ignore_index=True)
-                            results = pd.concat([results, pd.DataFrame([{'timestamp': timestamp, 'dvv': dvv, 'dvv_std': dvv_std, 'similarity': corr_zero_lag}])], ignore_index=True)
-                            #similarity_results = similarity_results.append({'timestamp': timestamp, 'central_lags': similarity.keys(), 'similarity': similarity}, ignore_index=True)
-                            similarity_results = pd.concat([similarity_results, pd.DataFrame([{'timestamp': timestamp, 'central_lags': similarity.keys(), 'similarity': similarity}])], ignore_index=True)
-                            
-                        else:
-                            #results = results.append({'timestamp': timestamp, 'dvv': dvv, 'dvv_std': dvv_std}, ignore_index=True)
-                            results = pd.concat([results, pd.DataFrame([{'timestamp': timestamp,'dvv': dvv,'dvv_std': dvv_std}])], ignore_index=True)
-                            
-                        # Create plot
-                        if self.mwcs_plot:
-
-                            self.ax2.set_visible(True)
-                            self.ax2.tick_params(right=True, labelright=True)
-        
-                            timestamp = stack_stream[i].stats.starttime.timestamp
-                            date = datetime.datetime.fromtimestamp(timestamp)
-                            
-                            self.ax.clear()
-                            self.ax2.clear()
-                            
-                            n = len(current_data)
-                            limit = (n - 1) / (2 * self.corr_resample_rate)
-                            timevec = np.linspace(-limit, limit, n)
-
-                            cer = self.ax.plot(timevec, reference_correlation, lw=2, c="r", label='Reference correlation')
-                            cem = self.ax.plot(timevec, current_data, lw=1, c="k", label='Moving correlation')
-
-                            self.ax.set_ylim(-1.25*max(abs(min(reference_correlation)), abs(max(reference_correlation))),
-                                             1.25*max(abs(min(reference_correlation)), abs(max(reference_correlation))))
-         
-                            self.ax.set_ylabel('Correlation')
-
-                            delayTime = self.ax2.plot(time_axis_filtered, delay_time_filtered, 'o-', c="k",lw=0, label = "dt")
-                            linReg = self.ax2.plot(time_axis_filtered, slope * time_axis_filtered + intercept, ls='--', c = 'k', label=f'dv/v = {dvv:.2f}% (±{dvv_std:.3f}%)')
-                            
-                            self.ax.set_xlabel('Time lag (s)')
-                            self.ax2.set_ylabel('dt (s)')
-                            self.ax2.set_ylim([-self.mwcs_abs_delay_time_limit*1.25,self.mwcs_abs_delay_time_limit*1.25])
-
-                            self.ax.set_title(f'MWCS | {station1}.{channel1} - {station2}.{channel2} | {date.strftime("%d/%m/%Y %H:%M:%S")} | {self.mwcs_freq_min} - {self.mwcs_freq_max} Hz')
-                            lns = cer + cem + delayTime + linReg
-                            labels = [l.get_label() for l in lns]
-                            self.ax.legend(lns, labels, loc="upper right", fontsize=9)
-                            self.ax.grid(True,axis="x",alpha=.5)
-
-                            self.fig.savefig(os.path.join(dvv_path, f"{station1}_{station2}_{channel1}_{channel2}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_stack{self.stack_window_length_days}d_mwcs_{i}.png"),format="PNG")
-
-                            self.ax.figure.canvas.draw()
-                            self.ax2.figure.canvas.draw()
-                            
-                    except Exception as e:
-                        print(e)
+                    if not os.path.isdir(station1_dir):
+                        print(f"Station directory not found: {station1_dir}")
+                        self.progress["value"] += 1
+                        self.progress.update_idletasks()
                         continue
-                    
-                # Save to csv file
-                results['timestamp'] = results['timestamp'].astype(float)
-                results['timestamp'] = pd.to_datetime(results['timestamp'], unit='s').dt.tz_localize('UTC').dt.tz_convert('America/Argentina/Buenos_Aires').dt.strftime("%d/%m/%Y %H:%M:%S")
 
-                if self.mwcs_do_similarity_analysis:
-                    similarity_results['timestamp'] = similarity_results['timestamp'].astype(float)
-                    similarity_results['timestamp'] = pd.to_datetime(similarity_results['timestamp'], unit='s').dt.tz_localize('UTC').dt.tz_convert('America/Argentina/Buenos_Aires').dt.strftime("%d/%m/%Y %H:%M:%S")
+                    if not os.path.isdir(station2_dir):
+                        print(f"Station directory not found: {station2_dir}")
+                        self.progress["value"] += 1
+                        self.progress.update_idletasks()
+                        continue
 
-                # Check if the csv file exists and if the results dataframe is not empty
-                if not results.empty:
-                    if os.path.exists(csv_file):
-                        # The file exists, so append without writing headers
-                        results.to_csv(csv_file, mode='a', header=False, index=False)
+                    channels1 = [
+                        item for item in os.listdir(station1_dir)
+                        if os.path.isdir(os.path.join(station1_dir, item))
+                    ]
+                    channels2 = [
+                        item for item in os.listdir(station2_dir)
+                        if os.path.isdir(os.path.join(station2_dir, item))
+                    ]
+
+                    channel_pairs = [
+                        (ch1, ch2)
+                        for ch1 in channels1
+                        for ch2 in channels2
+                        if ch1 <= ch2
+                    ]
+                else:
+                    channel_pairs = [(self.channel_code, self.channel_code)]
+
+                # --------------------------------------------------------------
+                # Process each channel pair
+                # --------------------------------------------------------------
+                for channel1, channel2 in channel_pairs:
+                    pair_name = f"{station1}_{station2}_{channel1}_{channel2}"
+
+                    self.status_var.set(
+                        f"Running the MWCS method for {station1} {channel1} and {station2} {channel2}"
+                    )
+                    print(
+                        f"Iniciando o método mwcs para {station1} {channel1} e {station2} {channel2} "
+                        f"({self.mwcs_freq_min}-{self.mwcs_freq_max}Hz)..."
+                    )
+
+                    stack_path = os.path.join(stack_root, pair_name)
+                    dvv_path = os.path.join(dvv_root, pair_name)
+                    os.makedirs(dvv_path, exist_ok=True)
+
+                    stack_file = os.path.join(stack_path, f"{pair_name}_stacks.mseed")
+                    log_file = os.path.join(
+                        out_dir,
+                        f"log_mwcs_{pair_name}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz.txt"
+                    )
+                    csv_file = os.path.join(
+                        dvv_path,
+                        f"{pair_name}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_dvv.csv"
+                    )
+
+                    if not os.path.exists(stack_file):
+                        print(f"Stack file not found: {stack_file}")
+                        continue
+
+                    try:
+                        stack_stream = read(stack_file, format="MSEED")
+                    except Exception as e:
+                        print(f"Error reading stack file {stack_file}: {e}")
+                        continue
+
+                    if len(stack_stream) == 0:
+                        print(f"No stack traces found in {stack_file}")
+                        continue
+
+                    stack_stream.sort(keys=["starttime"])
+
+                    # ----------------------------------------------------------
+                    # Load processed timestamps log
+                    # ----------------------------------------------------------
+                    if not os.path.isfile(log_file):
+                        with open(log_file, "w") as lf:
+                            lf.write("")
+
+                    with open(log_file, "r") as lf:
+                        processed_timestamps = set(line.strip() for line in lf if line.strip())
+
+                    # ----------------------------------------------------------
+                    # Define static / mean reference if needed
+                    # ----------------------------------------------------------
+                    if self.mwcs_reference == "static":
+                        reference_correlation = stack_stream[0].data
+                    elif self.mwcs_reference == "mean":
+                        reference_correlation = np.mean(
+                            [trace.data for trace in stack_stream], axis=0
+                        )
+                    elif self.mwcs_reference == "following":
+                        reference_correlation = None
                     else:
-                        # The file does not exist, write with headers
-                        results.to_csv(csv_file, index=False)
+                        print(f"Unknown MWCS reference mode: {self.mwcs_reference}")
+                        continue
 
-                if self.mwcs_do_similarity_analysis:
-                    
-                    if not similarity_results.empty:
-                        reformatted_similarity_results = []
+                    # ----------------------------------------------------------
+                    # Accumulate results in memory, then persist safely
+                    # ----------------------------------------------------------
+                    result_rows = []
+                    processed_now = []
 
-                        for idx, row in similarity_results.iterrows():
-                            timestamp = row['timestamp']
-                            similarity_dict = row['similarity']
-
-                            for key, value in similarity_dict.items():
-                                central_lag = key
-                                mean_correlation = value
-                                reformatted_similarity_results.append([timestamp, central_lag, mean_correlation])
-
-                        # Convert to DataFrame
-                        reformatted_similarity_df = pd.DataFrame(reformatted_similarity_results, columns=['timestamp', 'central_lag', 'mean_correlation'])
-
-                        if os.path.exists(similarity_csv_file):
-                            # The file exists, so append without writing headers
-                            reformatted_similarity_df.to_csv(similarity_csv_file, mode='a', header=False, index=False)
-                        else:
-                            # The file does not exist, write with headers
-                            reformatted_similarity_df.to_csv(similarity_csv_file, index=False)
-
+                    for i in tqdm(range(len(stack_stream)), desc="Processing traces for mwcs\n"):
                         try:
-                            # Read the CSV file
-                            #csv_file = '/home/vcavalcanti/Surffy/tempProject/out/dvv/AM.R85AF_AM.R85AF/AM.R85AF_AM.R85AF_similarity.csv'
-                            data = reformatted_similarity_df
+                            tr = stack_stream[i]
+                            trace_timestamp_utc = pd.Timestamp(
+                                tr.stats.starttime.datetime, tz="UTC"
+                            ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-                            # Convert the timestamp column to datetime objects
-                            data['timestamp'] = pd.to_datetime(data['timestamp'], format='%d/%m/%Y %H:%M:%S')
+                            if trace_timestamp_utc in processed_timestamps:
+                                continue
 
-                            # Convert timestamps to numerical values
-                            data['timestamp_num'] = data['timestamp'].apply(lambda x: x.timestamp())
+                            current_data = tr.data
+                            fs = float(tr.stats.sampling_rate)
 
-                            # Extract numerical timestamps, central lags, and mean correlations
-                            timestamps_num = data['timestamp_num'].values
-                            central_lags = data['central_lag'].values
-                            mean_correlations = data['mean_correlation'].values
+                            if self.mwcs_reference == "following":
+                                if i == 0:
+                                    reference_correlation = stack_stream[0].data
+                                else:
+                                    reference_correlation = stack_stream[i - 1].data
 
-                            # Create a grid for interpolation
-                            unique_timestamps_num = np.unique(timestamps_num)
-                            unique_central_lags = np.unique(central_lags)
-                            grid_x, grid_y = np.meshgrid(unique_timestamps_num, unique_central_lags)
+                            # --------------------------------------------------
+                            # Optional single-value similarity
+                            # --------------------------------------------------
+                            corr_zero_lag = np.nan
+                            if self.mwcs_do_similarity_analysis:
+                                if self.mwcs_similarity_method == "zero_lag_cc":
+                                    _, _, corr_zero_lag = self.cc(
+                                        current_data,
+                                        reference_correlation,
+                                        1 / fs,
+                                        -self.corr_max_lag,
+                                        self.corr_max_lag
+                                    )
+                                elif self.mwcs_similarity_method == "zero_lag_pcc":
+                                    _, _, corr_zero_lag = self.pcc2(
+                                        current_data,
+                                        reference_correlation,
+                                        1 / fs,
+                                        -self.corr_max_lag,
+                                        self.corr_max_lag
+                                    )
+                                else:
+                                    print(f"Unknown similarity method: {self.mwcs_similarity_method}")
+                                    corr_zero_lag = np.nan
 
-                            # Perform interpolation
-                            mean_corr_grid = griddata((timestamps_num, central_lags), mean_correlations, (grid_x, grid_y), method='cubic')
+                            # --------------------------------------------------
+                            # MWCS
+                            # --------------------------------------------------
+                            mwcs_data = self.mwcs(
+                                current=current_data,
+                                reference=reference_correlation,
+                                df=fs,
+                                freqmin=self.mwcs_freq_min,
+                                freqmax=self.mwcs_freq_max,
+                                tmin=self.mwcs_moving_start,
+                                window_length=self.mwcs_window_length,
+                                step=self.mwcs_window_step
+                            )
 
-                            # Convert numerical timestamps back to datetime for plotting
-                            time_grid = [datetime.datetime.fromtimestamp(ts) for ts in unique_timestamps_num]
+                            if mwcs_data.size == 0:
+                                continue
 
-                            # Create the filled contour plot
-                            fig = plt.figure(figsize=(24, 4))
-                            ax = fig.add_subplot(111)
-                            levels = np.linspace(np.nanmin(mean_corr_grid), np.nanmax(mean_corr_grid), 50)
-                            contour = ax.contourf(time_grid, unique_central_lags, mean_corr_grid, levels=levels, cmap='jet')
+                            time_axis = mwcs_data[:, 0]
+                            delay_time = mwcs_data[:, 1]
+                            err = mwcs_data[:, 2]
+                            coh = mwcs_data[:, 3]
 
-                            # Add color bar
-                            cbar = fig.colorbar(contour, label = "Similarity")
+                            # --------------------------------------------------
+                            # Filter MWCS points
+                            # --------------------------------------------------
+                            mask = (
+                                (np.abs(time_axis) >= self.mwcs_lagtime_ballistic)
+                                & (np.abs(time_axis) <= (self.mwcs_lagtime_max - (self.mwcs_window_length / 2.0)))
+                            )
+                            mask &= (coh >= self.mwcs_coherency_min)
+                            mask &= (err <= self.mwcs_error_max)
+                            mask &= (np.abs(delay_time) <= self.mwcs_abs_delay_time_limit)
 
-                            # Set plot labels and title
-                            #plt.xlabel('Timestamp')
-                            ax.set_ylabel('Lapse time (s)')
-                            #plt.title('Mean Correlation Over Time and Central Lag')
-                            ax.invert_yaxis()
-                            #ax.set_title(f"{station1} - {station2}")
+                            time_axis_filtered = time_axis[mask]
+                            delay_time_filtered = delay_time[mask]
+                            err_filtered = err[mask]
 
-                            # Format the x-axis for better readability
-                            fig.autofmt_xdate()
+                            if len(time_axis_filtered) < 2:
+                                continue
 
-                            fig.tight_layout()
+                            finite_mask = (
+                                np.isfinite(time_axis_filtered)
+                                & np.isfinite(delay_time_filtered)
+                                & np.isfinite(err_filtered)
+                            )
+                            time_axis_filtered = time_axis_filtered[finite_mask]
+                            delay_time_filtered = delay_time_filtered[finite_mask]
+                            err_filtered = err_filtered[finite_mask]
 
-                            # Show the plot
-                            fig.savefig(os.path.join(dvv_path, f'{station1}_{station2}_{channel1}_{channel2}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_time_lapse_similarity.png'), dpi = 300)
-                            
+                            if len(time_axis_filtered) < 2:
+                                continue
+
+                            positive_err_mask = err_filtered > 0
+                            time_axis_filtered = time_axis_filtered[positive_err_mask]
+                            delay_time_filtered = delay_time_filtered[positive_err_mask]
+                            err_filtered = err_filtered[positive_err_mask]
+
+                            if len(time_axis_filtered) < 2:
+                                continue
+
+                            # --------------------------------------------------
+                            # Weighted linear regression
+                            # --------------------------------------------------
+                            weights = 1.0 / err_filtered
+
+                            slope, intercept, std, npts = linear_regression(
+                                time_axis_filtered,
+                                delay_time_filtered,
+                                weights=weights,
+                                intercept_origin=False
+                            )
+
+                            if (
+                                np.isnan(slope) or np.isinf(slope)
+                                or np.isnan(std) or np.isinf(std)
+                            ):
+                                print("regressão linear falhou")
+                                continue
+
+                            dvv = -100.0 * slope
+                            dvv_std = 100.0 * std
+
+                            row = {
+                                "timestamp": trace_timestamp_utc,
+                                "dvv": dvv,
+                                "dvv_std": dvv_std,
+                            }
+
+                            if self.mwcs_do_similarity_analysis:
+                                row["similarity"] = corr_zero_lag
+
+                            result_rows.append(row)
+                            processed_now.append(trace_timestamp_utc)
+
+                            # --------------------------------------------------
+                            # Optional MWCS diagnostic plot
+                            # --------------------------------------------------
+                            if self.mwcs_plot:
+                                self.ax.clear()
+                                self.ax2.clear()
+                                self.ax2.yaxis.set_label_position("right")
+                                self.ax2.yaxis.tick_right()
+                                self.ax2.spines["right"].set_visible(True)
+                                self.ax2.spines["left"].set_visible(False)
+                                self.ax2.tick_params(axis="y", right=True, labelright=True, left=False, labelleft=False)
+
+                                plot_dt = 1.0 / fs
+                                n_samples = len(current_data)
+                                limit = (n_samples - 1) / (2.0 * fs)
+                                timevec = np.linspace(-limit, limit, n_samples)
+
+                                plot_date = pd.to_datetime(trace_timestamp_utc, utc=True)
+                                if hasattr(self, "output_timezone") and self.output_timezone:
+                                    try:
+                                        plot_date = plot_date.tz_convert(self.output_timezone)
+                                    except Exception:
+                                        pass
+
+                                cer = self.ax.plot(
+                                    timevec,
+                                    reference_correlation,
+                                    lw=2,
+                                    c="r",
+                                    label="Reference correlation"
+                                )
+                                cem = self.ax.plot(
+                                    timevec,
+                                    current_data,
+                                    lw=1,
+                                    c="k",
+                                    label="Moving correlation"
+                                )
+
+                                ref_max = np.max(np.abs(reference_correlation))
+                                cur_max = np.max(np.abs(current_data))
+                                amp_max = max(ref_max, cur_max)
+
+                                if amp_max > 0:
+                                    self.ax.set_ylim(-1.25 * amp_max, 1.25 * amp_max)
+
+                                self.ax.set_ylabel("Correlation")
+
+                                delay_line = self.ax2.plot(
+                                    time_axis_filtered,
+                                    delay_time_filtered,
+                                    "o",
+                                    c="k",
+                                    lw=0,
+                                    label="dt"
+                                )
+                                reg_line = self.ax2.plot(
+                                    time_axis_filtered,
+                                    slope * time_axis_filtered + intercept,
+                                    ls="--",
+                                    c="k",
+                                    label=f"dv/v = {dvv:.2f}% (±{dvv_std:.3f}%)"
+                                )
+
+                                self.ax.set_xlabel("Time lag (s)")
+                                self.ax2.set_ylabel("dt (s)")
+                                self.ax2.set_ylim(
+                                    [
+                                        -self.mwcs_abs_delay_time_limit * 1.25,
+                                        self.mwcs_abs_delay_time_limit * 1.25
+                                    ]
+                                )
+
+                                self.ax.set_title(
+                                    f"MWCS | {station1}.{channel1} - {station2}.{channel2} | "
+                                    f"{plot_date.strftime('%d/%m/%Y %H:%M:%S')} | "
+                                    f"{self.mwcs_freq_min} - {self.mwcs_freq_max} Hz"
+                                )
+
+                                lines = cer + cem + delay_line + reg_line
+                                labels = [line.get_label() for line in lines]
+                                self.ax.legend(lines, labels, loc="upper right", fontsize=9)
+                                self.ax.grid(True, axis="x", alpha=0.5)
+
+                                self.fig.savefig(
+                                    os.path.join(
+                                        dvv_path,
+                                        f"{pair_name}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_"
+                                        f"stack{self.stack_window_length_days}d_mwcs_{i}.png"
+                                    ),
+                                    format="PNG"
+                                )
+
+                                self.ax.figure.canvas.draw()
+                                self.ax2.figure.canvas.draw()
+
                         except Exception as e:
-                            print(e)
+                            print(f"Error processing MWCS for {pair_name}, trace {i}: {e}")
+                            continue
 
-                self.status_var.set(f"MWCS for {station1} {channel1} and {station2} {channel2} completed")
-                self.progress.update_idletasks()
+                    # ----------------------------------------------------------
+                    # Persist results safely
+                    # ----------------------------------------------------------
+                    if result_rows:
+                        results_df = pd.DataFrame(result_rows)
+
+                        if os.path.exists(csv_file):
+                            results_df.to_csv(csv_file, mode="a", header=False, index=False)
+                        else:
+                            results_df.to_csv(csv_file, index=False)
+
+                        # Only after successful CSV write do we mark as processed
+                        with open(log_file, "a") as lf:
+                            for ts in processed_now:
+                                lf.write(ts + "\n")
+
+                    self.status_var.set(
+                        f"MWCS for {station1} {channel1} and {station2} {channel2} completed"
+                    )
+
                 self.progress["value"] += 1
+                self.progress.update_idletasks()
+
+            except Exception as e:
+                print(f"Error processing pair {station1} - {station2}: {e}")
+                self.progress["value"] += 1
+                self.progress.update_idletasks()
+                continue
 
     def plot_dvv_mean(self):
         pass
     
     def plot_dvv(self):
         if self.current_project_path is None:
-            tk.messagebox.showwarning(
+            messagebox.showwarning(
                 "SANBA",
                 "No project path detected. Create or load a project to continue."
             )
             return
 
         if not self.pairs:
-            tk.messagebox.showwarning(
+            messagebox.showwarning(
                 "SANBA",
                 "No pair(s) of station(s) detected. Select stations to continue."
             )
             return
 
-        plot_similarity = tk.messagebox.askyesno(
+        plot_similarity = messagebox.askyesno(
             "SANBA",
             "Plot similarity in second y axis?"
         )
-        plot_separately = tk.messagebox.askyesno(
+        plot_separately = messagebox.askyesno(
             "SANBA",
             "Plot dv/v separately for each pair of stations?"
         )
 
-        self.ax.clear()
-        self.ax2.clear()
+        data_dir = os.path.join(self.current_project_path, "data")
+        out_dir = os.path.join(self.current_project_path, "out")
 
-        # Build the list of pair/channel combinations to plot
+        # --------------------------------------------------------------
+        # Build full list of pair/channel combinations
+        # --------------------------------------------------------------
         pair_channel_list = []
 
-        if self.do_crosscomponent_analysis:
-            for pair in self.pairs:
-                station1, station2 = pair
+        for station1, station2 in self.pairs:
+            if self.do_crosscomponent_analysis:
+                station1_dir = os.path.join(data_dir, station1)
+                station2_dir = os.path.join(data_dir, station2)
 
-                dir1 = os.path.join(self.current_project_path, "data", station1)
-                dir2 = os.path.join(self.current_project_path, "data", station2)
+                if not os.path.isdir(station1_dir):
+                    print(f"Station directory not found: {station1_dir}")
+                    continue
 
-                channels1 = os.listdir(dir1)
-                channels2 = os.listdir(dir2)
+                if not os.path.isdir(station2_dir):
+                    print(f"Station directory not found: {station2_dir}")
+                    continue
+
+                channels1 = [
+                    item for item in os.listdir(station1_dir)
+                    if os.path.isdir(os.path.join(station1_dir, item))
+                ]
+                channels2 = [
+                    item for item in os.listdir(station2_dir)
+                    if os.path.isdir(os.path.join(station2_dir, item))
+                ]
 
                 channel_pairs = [
                     (ch1, ch2)
@@ -2111,18 +2419,26 @@ class PSVM(ttk.Frame):
 
                 for channel1, channel2 in channel_pairs:
                     pair_channel_list.append((station1, station2, channel1, channel2))
-        else:
-            for pair in self.pairs:
-                station1, station2 = pair
+            else:
                 pair_channel_list.append(
                     (station1, station2, self.channel_code, self.channel_code)
                 )
 
+        if not pair_channel_list:
+            messagebox.showwarning(
+                "SANBA",
+                "No valid station/channel combinations were found to plot."
+            )
+            return
+
         self.progress["value"] = 0
         self.progress["maximum"] = len(pair_channel_list)
 
-        for station1, station2, channel1, channel2 in pair_channel_list:
+        if not plot_separately:
+            self.ax.clear()
+            self.ax2.clear()
 
+        for station1, station2, channel1, channel2 in pair_channel_list:
             self.status_var.set(
                 f"Plotting the dv/v series for {station1} {channel1} and {station2} {channel2}"
             )
@@ -2131,22 +2447,15 @@ class PSVM(ttk.Frame):
                 f"({self.mwcs_freq_min}-{self.mwcs_freq_max} Hz)..."
             )
 
-            out_dir = os.path.join(self.current_project_path, "out")
-            dvv_path = os.path.join(
-                out_dir, "dvv", f"{station1}_{station2}_{channel1}_{channel2}"
-            )
+            pair_name = f"{station1}_{station2}_{channel1}_{channel2}"
+            dvv_path = os.path.join(out_dir, "dvv", pair_name)
             csv_file = os.path.join(
                 dvv_path,
-                f"{station1}_{station2}_{channel1}_{channel2}_"
-                f"{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_dvv.csv"
+                f"{pair_name}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_dvv.csv"
             )
 
             if not os.path.exists(csv_file):
                 print(f"CSV file not found: {csv_file}")
-                tk.messagebox.showwarning(
-                    "SANBA",
-                    f"CSV file not found:\n{csv_file}"
-                )
                 self.progress["value"] += 1
                 self.progress.update_idletasks()
                 continue
@@ -2155,7 +2464,7 @@ class PSVM(ttk.Frame):
                 df = pd.read_csv(csv_file)
             except Exception as e:
                 print(f"Error reading CSV file {csv_file}: {e}")
-                tk.messagebox.showerror(
+                messagebox.showerror(
                     "SANBA",
                     f"Error reading CSV file:\n{csv_file}\n\n{e}"
                 )
@@ -2165,91 +2474,116 @@ class PSVM(ttk.Frame):
 
             if "timestamp" not in df.columns:
                 print(f"'timestamp' column not found in {csv_file}")
-                tk.messagebox.showerror(
-                    "SANBA",
-                    f"'timestamp' column not found in:\n{csv_file}"
-                )
                 self.progress["value"] += 1
                 self.progress.update_idletasks()
                 continue
 
             if "dvv" not in df.columns:
                 print(f"'dvv' column not found in {csv_file}")
-                tk.messagebox.showerror(
-                    "SANBA",
-                    f"'dvv' column not found in:\n{csv_file}"
-                )
                 self.progress["value"] += 1
                 self.progress.update_idletasks()
                 continue
 
+            # ----------------------------------------------------------
+            # Parse timestamps written by the new compute_dvv():
+            # UTC ISO strings like 2026-04-09T15:30:00Z
+            # ----------------------------------------------------------
             try:
-                df["timestamp"] = pd.to_datetime(
-                    df["timestamp"],
-                    format="%d/%m/%Y %H:%M:%S",
-                    errors="coerce"
-                )
+                df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
 
-                if df["timestamp"].isnull().any():
-                    raise ValueError(
-                        "Some dates could not be parsed. Check the format in the CSV file."
+                if df["timestamp"].isnull().all():
+                    raise ValueError("No valid timestamps could be parsed.")
+
+                df = df.dropna(subset=["timestamp"]).copy()
+
+                try:
+                    df["timestamp_local"] = df["timestamp"].dt.tz_convert(self.output_timezone)
+                except Exception:
+                    print(
+                        f"Invalid or unsupported timezone '{self.output_timezone}'. Falling back to UTC."
                     )
+                    df["timestamp_local"] = df["timestamp"]
+
             except Exception as e:
-                print(f"Error parsing dates in {csv_file}: {e}")
-                tk.messagebox.showerror(
-                    "Date Parsing Error",
-                    f"Error parsing dates in:\n{csv_file}\n\n{e}"
+                print(f"Error parsing timestamps in {csv_file}: {e}")
+                messagebox.showerror(
+                    "SANBA",
+                    f"Error parsing timestamps in:\n{csv_file}\n\n{e}"
                 )
                 self.progress["value"] += 1
                 self.progress.update_idletasks()
                 continue
 
-            # Remove rows with invalid timestamps just in case
-            df = df.dropna(subset=["timestamp"]).copy()
+            # ----------------------------------------------------------
+            # Numeric coercion
+            # ----------------------------------------------------------
+            df["dvv"] = pd.to_numeric(df["dvv"], errors="coerce")
+
+            if "dvv_std" in df.columns:
+                df["dvv_std"] = pd.to_numeric(df["dvv_std"], errors="coerce")
+
+            if "similarity" in df.columns:
+                df["similarity"] = pd.to_numeric(df["similarity"], errors="coerce")
+
+            df = df.dropna(subset=["dvv"]).copy()
 
             if df.empty:
-                print(f"No valid data found in {csv_file}")
+                print(f"No valid dv/v data found in {csv_file}")
                 self.progress["value"] += 1
                 self.progress.update_idletasks()
                 continue
 
-            # Sort by time to ensure proper plotting
             df = df.sort_values("timestamp").reset_index(drop=True)
 
-            # Check whether similarity can actually be plotted
-            has_similarity = "similarity" in df.columns
+            # ----------------------------------------------------------
+            # Determine similarity usability
+            # ----------------------------------------------------------
+            has_similarity = (
+                "similarity" in df.columns and df["similarity"].notna().any()
+            )
             use_similarity = plot_similarity and has_similarity
 
             if plot_similarity and not has_similarity:
-                print(f"'similarity' column not found in {csv_file}. Similarity will not be plotted.")
+                print(f"'similarity' column missing or empty in {csv_file}. Similarity will not be plotted.")
+
+            # ----------------------------------------------------------
+            # Prepare axes
+            # ----------------------------------------------------------
+            if plot_separately:
+                self.ax.clear()
+                self.ax2.clear()
 
             if use_similarity:
                 self.ax2.set_visible(True)
                 self.ax2.set_ylabel("Similarity")
                 self.ax2.tick_params(right=True, labelright=True)
-                s#elf.ax2.spines["right"].set_visible(True)
             else:
-                # Hide everything from the twin axis
+                self.ax2.set_visible(False)
                 self.ax2.set_ylabel("")
                 self.ax2.set_yticks([])
                 self.ax2.tick_params(right=False, labelright=False)
-                #self.ax2.spines["right"].set_visible(False)
 
-            # Compute dv/v series
+            # ----------------------------------------------------------
+            # Compute plotted dv/v series
+            # ----------------------------------------------------------
             if self.mwcs_reference == "following":
                 dvv_plot = df["dvv"].cumsum()
             else:
                 dvv_plot = df["dvv"]
 
+            # ----------------------------------------------------------
+            # Plot
+            # ----------------------------------------------------------
             if plot_separately:
-                self.ax.clear()
-                self.ax2.clear()
-
-                self.ax.plot(df["timestamp"], dvv_plot, label="dv/v")
+                self.ax.plot(
+                    df["timestamp_local"],
+                    dvv_plot,
+                    label="dv/v"
+                )
 
                 if use_similarity:
                     self.ax2.plot(
-                        df["timestamp"],
+                        df["timestamp_local"],
                         df["similarity"],
                         ls="--",
                         c="k",
@@ -2257,57 +2591,59 @@ class PSVM(ttk.Frame):
                     )
             else:
                 label = f"{station1} {channel1} - {station2} {channel2}"
-                self.ax.plot(df["timestamp"], dvv_plot, label=label)
+
+                self.ax.plot(
+                    df["timestamp_local"],
+                    dvv_plot,
+                    label=label
+                )
 
                 if use_similarity:
                     self.ax2.plot(
-                        df["timestamp"],
+                        df["timestamp_local"],
                         df["similarity"],
                         ls="--",
                         label=f"Similarity {label}"
                     )
 
-            if "dvv_std" in df.columns:
-                self.ax.fill_between(
-                    df["timestamp"],
-                    dvv_plot - df["dvv_std"],
-                    dvv_plot + df["dvv_std"],
-                    alpha=0.25
-                )
+            # Uncertainty band
+            if plot_separately and "dvv_std" in df.columns:
+                valid_std = df["dvv_std"].notna()
+                if valid_std.any():
+                    self.ax.fill_between(
+                        df.loc[valid_std, "timestamp_local"],
+                        dvv_plot.loc[valid_std] - df.loc[valid_std, "dvv_std"],
+                        dvv_plot.loc[valid_std] + df.loc[valid_std, "dvv_std"],
+                        alpha=0.25
+                    )
 
             self.ax.set_ylabel("dv/v (%)")
             self.ax.grid(True)
-
             self.ax.spines["right"].set_visible(False)
             self.ax.spines["top"].set_visible(False)
-
-            self.ax.xaxis.set_major_locator(plt.MaxNLocator(6))
             self.ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m/%Y\n%H:%M"))
 
-            min_date = df["timestamp"].min()
-            max_date = df["timestamp"].max()
+            min_date = df["timestamp_local"].min()
+            max_date = df["timestamp_local"].max()
             self.ax.set_xlim(min_date, max_date)
 
-            if use_similarity:
-                self.ax2.set_ylabel("Similarity")
-
             if plot_separately:
+                self.ax.legend(loc="upper right", fontsize="small")
+
                 if use_similarity:
-                    self.ax.legend(loc="upper right", fontsize="small")
                     self.ax2.legend(loc="lower right", fontsize="small")
 
                 self.ax.set_title(
                     f"{station1} {channel1} - {station2} {channel2} | "
-                    f"{df['timestamp'].iloc[0].strftime('%d/%m/%Y')} - "
-                    f"{df['timestamp'].iloc[-1].strftime('%d/%m/%Y')} | "
+                    f"{df['timestamp_local'].iloc[0].strftime('%d/%m/%Y')} - "
+                    f"{df['timestamp_local'].iloc[-1].strftime('%d/%m/%Y')} | "
                     f"{self.mwcs_freq_min}-{self.mwcs_freq_max} Hz"
                 )
 
                 self.fig.savefig(
                     os.path.join(
                         dvv_path,
-                        f"{station1}_{station2}_{channel1}_{channel2}_"
-                        f"{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_dvv.png"
+                        f"{pair_name}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_dvv.png"
                     ),
                     dpi=300
                 )
