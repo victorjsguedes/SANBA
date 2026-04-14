@@ -1,6 +1,6 @@
 import sys
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+from tkinter import ttk, filedialog, messagebox, simpledialog, colorchooser
 from PIL import ImageTk, Image
 import os
 from natsort import natsorted
@@ -8,7 +8,7 @@ from obspy import read, Trace, Stream
 from matplotlib import pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-from scipy.signal import hilbert, correlate, fftconvolve, detrend
+from scipy.signal import hilbert, correlate, fftconvolve, detrend, savgol_filter
 import numpy as np
 from numpy import isnan, isinf
 import datetime
@@ -23,6 +23,7 @@ from pandas.plotting import register_matplotlib_converters
 from scipy.interpolate import griddata
 from threading import Thread
 import zoneinfo
+import math
 
 class ToolTip:
     def __init__(self, widget, text):
@@ -167,6 +168,7 @@ class PSVM(ttk.Frame):
         processing_menu.add_command(label="Run MWCS", command=self.compute_dvv)
         processing_menu.add_separator()
         processing_menu.add_command(label="Run all steps", command=self.run_all)
+        processing_menu.add_command(label="PSD", command=self.plot_psd)
 
     def _build_plot_menu(self, menubar):
         plotting_menu = tk.Menu(menubar, tearoff=False)
@@ -250,8 +252,8 @@ class PSVM(ttk.Frame):
         # ---------------------------
         self.network_code = "AM"
         self.channel_code = "EHZ.D"
-        self.do_crosscomponent_analysis = False
-        self.corr_sorting_type = "pairs"#both#pairs#individual
+        self.do_crosscomponent_analysis = True
+        self.corr_sorting_type = "individual"#both#pairs#individual
         self.correlation_method = "pcc"#pcc#cc
 
         self.corr_remove_mean = True
@@ -266,14 +268,13 @@ class PSVM(ttk.Frame):
         self.corr_min_freq = 3
         self.corr_max_freq = 12
         self.corr_resample_rate = self.corr_max_freq * 2
-        self.corr_max_lag = 5
-        self.corr_snr_threshold = 0
-        self.stack_window_length_days = 1
+        self.corr_max_lag = 3
+        self.stack_window_length_days = 30
 
         # ---------------------------
         # MWCS
         # ---------------------------
-        self.mwcs_reference = "following"#mean#following#static
+        self.mwcs_reference = "mean"#mean#following#static
         self.mwcs_freq_min = 4
         self.mwcs_freq_max = 10
         self.mwcs_window_length = 1
@@ -286,7 +287,7 @@ class PSVM(ttk.Frame):
         self.mwcs_lagtime_max = self.corr_max_lag
         self.mwcs_abs_delay_time_limit = 0.1
 
-        self.mwcs_do_similarity_analysis = False
+        self.mwcs_do_similarity_analysis = True
         self.mwcs_similarity_method = "zero_lag_pcc"
 
         # ---------------------------
@@ -294,7 +295,7 @@ class PSVM(ttk.Frame):
         # ---------------------------
         self.corr_plot = True
         self.stack_plot = True
-        self.mwcs_plot = False
+        self.mwcs_plot = True
         self.output_timezone = "America/Sao_Paulo"
 
     def on_closing(self):
@@ -728,7 +729,7 @@ class PSVM(ttk.Frame):
         self.correlation()
         self.stack()
         self.compute_dvv()
-        self.plot_dvv()
+        #self.plot_dvv()
 
     def create_project(self):
         directory = filedialog.askdirectory()
@@ -920,6 +921,472 @@ class PSVM(ttk.Frame):
 
         return whitened_signal
 
+    def plot_psd(self):
+        """
+        Compute and plot PSD for the stations that appear in self.pairs using a
+        manual overlapped-window spectrum:
+
+        split trace into windows
+        -> mean removal
+        -> detrend
+        -> taper
+        -> FFT for each segment
+        -> |FFT|² / seg
+        -> average in linear power
+        -> dB
+        -> Savitzky–Golay smoothing
+
+        The method also overlays Peterson-style noise model curves loaded from
+        noise_models.npz, converting period to frequency before plotting.
+        """
+        if self.current_project_path is None:
+            messagebox.showwarning(
+                "SANBA",
+                "No project path detected. Create or load a project to continue."
+            )
+            return
+
+        if not self.pairs:
+            messagebox.showwarning(
+                "SANBA",
+                "No pair(s) of station(s) detected. Select stations to continue."
+            )
+            return
+
+        data_dir = os.path.join(self.current_project_path, "data")
+        if not os.path.isdir(data_dir):
+            messagebox.showwarning("SANBA", "The project data directory was not found.")
+            return
+
+        plot_separately = messagebox.askyesno(
+            "SANBA",
+            "Plot PSD separately for each station detected in the selected pairs?"
+        )
+
+        # ------------------------------------------------------------------
+        # PSD parameters
+        # ------------------------------------------------------------------
+        try:
+            window_length_sec = 3600#float(self.corr_window_size)
+            overlap_frac = 0#float(self.corr_overlap)
+            fmin = 3#float(self.corr_min_freq)
+            fmax = 12#float(self.corr_max_freq)
+        except Exception as e:
+            messagebox.showwarning("SANBA", f"Invalid PSD parameters: {e}")
+            return
+
+        if window_length_sec <= 0:
+            messagebox.showwarning("SANBA", "Window length must be positive.")
+            return
+
+        if not (0 <= overlap_frac < 1):
+            messagebox.showwarning("SANBA", "Overlap must be between 0 and 1.")
+            return
+
+        if fmin <= 0 or fmax <= 0 or fmin >= fmax:
+            messagebox.showwarning("SANBA", "Require 0 < minimum frequency < maximum frequency.")
+            return
+
+        savgol_window = 201
+        savgol_poly = 2
+
+        # ------------------------------------------------------------------
+        # Build unique station list from self.pairs
+        # ------------------------------------------------------------------
+        stations_to_process = []
+        for sta1, sta2 in self.pairs:
+            if sta1 not in stations_to_process:
+                stations_to_process.append(sta1)
+            if sta2 not in stations_to_process:
+                stations_to_process.append(sta2)
+
+        if not stations_to_process:
+            messagebox.showwarning("SANBA", "No stations were found in self.pairs.")
+            return
+
+        # ------------------------------------------------------------------
+        # Load noise model curves
+        # ------------------------------------------------------------------
+        noise_freq = None
+        noise_low = None
+        noise_high = None
+
+        '''possible_noise_paths = [
+            os.path.join(self.script_dir, "data", "noise_models.npz"),
+            os.path.join(self.script_dir, "noise_models.npz"),
+            os.path.join(self.current_project_path, "noise_models.npz"),
+        ]
+
+        noise_model_path = None
+        for p in possible_noise_paths:
+            if os.path.isfile(p):
+                noise_model_path = p
+                break'''
+
+        noise_model_path = r"C:\Users\victor.guedes\Downloads\noise_models.npz"
+
+        if noise_model_path is not None:
+            try:
+                noise_data = np.load(noise_model_path)
+                periods = np.asarray(noise_data["model_periods"], dtype=float)
+                noise_low = np.asarray(noise_data["low_noise"], dtype=float)
+                noise_high = np.asarray(noise_data["high_noise"], dtype=float)
+
+                valid = np.isfinite(periods) & (periods > 0)
+                periods = periods[valid]
+                noise_low = noise_low[valid]
+                noise_high = noise_high[valid]
+
+                noise_freq = 1.0 / periods
+                sort_idx = np.argsort(noise_freq)
+
+                noise_freq = noise_freq[sort_idx]
+                noise_low = noise_low[sort_idx]
+                noise_high = noise_high[sort_idx]
+
+                noise_mask = (noise_freq >= fmin) & (noise_freq <= fmax)
+                noise_freq = noise_freq[noise_mask]
+                noise_low = noise_low[noise_mask]
+                noise_high = noise_high[noise_mask]
+
+            except Exception as e:
+                print(f"Could not load noise model file: {e}")
+                noise_freq = None
+                noise_low = None
+                noise_high = None
+        else:
+            print("noise_models.npz was not found. PSD will be plotted without noise model curves.")
+
+        # ------------------------------------------------------------------
+        # Determine channel selection per station
+        # ------------------------------------------------------------------
+        station_channel_map = {}
+
+        for station in stations_to_process:
+            station_path = os.path.join(data_dir, station)
+
+            if not os.path.isdir(station_path):
+                print(f"Station directory not found: {station_path}")
+                continue
+
+            if self.do_crosscomponent_analysis:
+                channel_dirs = [
+                    ch for ch in os.listdir(station_path)
+                    if os.path.isdir(os.path.join(station_path, ch))
+                ]
+            else:
+                channel_dirs = [self.channel_code]
+
+            valid_channels = []
+            for ch in channel_dirs:
+                ch_path = os.path.join(station_path, ch)
+                if os.path.isdir(ch_path):
+                    valid_channels.append(ch)
+
+            if valid_channels:
+                station_channel_map[station] = valid_channels
+
+        if not station_channel_map:
+            messagebox.showwarning(
+                "SANBA",
+                "No valid station/channel folders were found for the stations in self.pairs."
+            )
+            return
+
+        # ------------------------------------------------------------------
+        # Helper to compute PSD for one station/channel
+        # ------------------------------------------------------------------
+        def _compute_station_channel_psd(station, channel):
+            channel_dir = os.path.join(data_dir, station, channel)
+
+            if not os.path.isdir(channel_dir):
+                return None
+
+            files = natsorted([
+                os.path.join(channel_dir, f)
+                for f in os.listdir(channel_dir)
+                if os.path.isfile(os.path.join(channel_dir, f))
+            ])
+
+            if not files:
+                return None
+
+            psd_sum = None
+            psd_count = 0
+            fs_ref = None
+            dt_ref = None
+            seg_samples = None
+
+            for file_path in files:
+                try:
+                    st = read(file_path)
+
+                    if len(st) > 1:
+                        st.merge(method=0, fill_value="interpolate")
+
+                    if len(st) == 0:
+                        continue
+
+                    tr = st[0].copy()
+
+                    # Optional pre-processing consistent with SANBA
+                    if self.corr_remove_mean:
+                        tr.detrend("demean")
+
+                    if self.corr_remove_trend:
+                        tr.detrend("linear")
+
+                    if self.corr_taper:
+                        tr.taper(max_percentage=0.05, type="cosine")
+
+                    if self.corr_bandpass_filter:
+                        tr.filter(
+                            "bandpass",
+                            freqmin=fmin,
+                            freqmax=fmax,
+                            zerophase=True
+                        )
+
+                    fs = float(tr.stats.sampling_rate)
+                    dt = float(tr.stats.delta)
+
+                    if fs_ref is None:
+                        fs_ref = fs
+                        dt_ref = dt
+                        seg_samples = int(window_length_sec * fs_ref)
+
+                        if seg_samples < 8:
+                            print(f"Segment too short for PSD in {station}.{channel}")
+                            return None
+
+                        step_samples = int(seg_samples * (1.0 - overlap_frac))
+                        if step_samples < 1:
+                            print(f"Invalid PSD overlap for {station}.{channel}")
+                            return None
+                    else:
+                        if abs(fs - fs_ref) > 1e-6:
+                            print(f"Skipping {file_path}: sampling rate differs from previous files.")
+                            continue
+
+                    data = np.asarray(tr.data, dtype=np.float64)
+                    if len(data) < seg_samples:
+                        continue
+
+                    step_samples = int(seg_samples * (1.0 - overlap_frac))
+
+                    for start in range(0, len(data) - seg_samples + 1, step_samples):
+                        seg = data[start:start + seg_samples].copy()
+
+                        '''seg -= np.mean(seg)
+                        seg = detrend(seg, type="linear")
+                        seg *= cosine_taper(seg_samples, 0.05)'''
+
+                        fft_seg = np.fft.rfft(seg)
+                        power = (np.abs(fft_seg) ** 2) / seg_samples
+
+                        if psd_sum is None:
+                            psd_sum = np.zeros_like(power, dtype=np.float64)
+
+                        psd_sum += power
+                        psd_count += 1
+
+                except Exception as e:
+                    print(f"Failed processing {file_path}: {e}")
+                    continue
+
+            if psd_count == 0 or psd_sum is None or fs_ref is None:
+                return None
+
+            psd_avg = psd_sum / psd_count
+            freq = np.fft.rfftfreq(seg_samples, d=dt_ref)
+
+            eps = np.finfo(float).tiny
+            psd_db = 10.0 * np.log10(np.maximum(psd_avg, eps))
+
+            mask = (freq >= fmin) & (freq <= fmax)
+            if not np.any(mask):
+                return None
+
+            freq_plot = freq[mask]
+            psd_plot = psd_db[mask]
+
+            sg_window = min(savgol_window, len(psd_plot))
+            if sg_window % 2 == 0:
+                sg_window -= 1
+
+            if sg_window <= savgol_poly:
+                psd_smooth = psd_plot.copy()
+            else:
+                psd_smooth = savgol_filter(psd_plot, sg_window, savgol_poly)
+
+            return {
+                "freq": freq_plot,
+                "psd_db": psd_plot,
+                "psd_smooth": psd_smooth,
+                "count": psd_count
+            }
+
+        # ------------------------------------------------------------------
+        # Plot modes
+        # ------------------------------------------------------------------
+        self.progress["value"] = 0
+        self.progress["maximum"] = len(station_channel_map)
+
+        if plot_separately:
+            for station, channels in station_channel_map.items():
+                self.ax.clear()
+                self.ax2.clear()
+                self.ax2.set_visible(False)
+                self.ax2.set_ylabel("")
+                self.ax2.set_yticks([])
+                self.ax2.tick_params(right=False, labelright=False)
+
+                plotted_any = False
+
+                for channel in channels:
+                    self.status_var.set(f"Computing PSD for {station} {channel}")
+                    print(f"Computing PSD for {station} {channel}...")
+
+                    result = _compute_station_channel_psd(station, channel)
+                    if result is None:
+                        continue
+
+                    self.ax.semilogx(
+                        result["freq"],
+                        result["psd_db"],
+                        lw=0.6,
+                        alpha=0.30,
+                        label=f"{station}.{channel} raw"
+                    )
+                    self.ax.semilogx(
+                        result["freq"],
+                        result["psd_smooth"],
+                        lw=1.8,
+                        label=f"{station}.{channel} smooth"
+                    )
+                    plotted_any = True
+
+                if noise_freq is not None and len(noise_freq) > 0:
+                    self.ax.semilogx(
+                        noise_freq,
+                        noise_low,
+                        color="royalblue",
+                        ls="--",
+                        lw=1.5,
+                        label="NLNM"
+                    )
+                    self.ax.semilogx(
+                        noise_freq,
+                        noise_high,
+                        color="crimson",
+                        ls="--",
+                        lw=1.5,
+                        label="NHNM"
+                    )
+
+                if plotted_any:
+                    self.ax.set_title(
+                        f"PSD | {station} | {fmin:.2f}-{fmax:.2f} Hz | "
+                        f"window={window_length_sec:.1f}s overlap={overlap_frac:.2f}"
+                    )
+                    self.ax.set_xlabel("Frequency (Hz)")
+                    self.ax.set_ylabel("Power (dB)")
+                    self.ax.grid(True, which="both", ls="--", lw=0.5, alpha=0.5)
+                    self.ax.spines["top"].set_visible(False)
+                    self.ax.spines["right"].set_visible(False)
+                    self.ax.legend(loc="best", fontsize="small")
+                    self.fig.tight_layout()
+                    self.canvas.draw()
+
+                    save_path = os.path.join(
+                        data_dir,
+                        station,
+                        f"{station}_PSD.png"
+                    )
+                    try:
+                        self.fig.savefig(save_path, dpi=300)
+                    except Exception as e:
+                        print(f"Could not save PSD figure for {station}: {e}")
+
+                self.progress["value"] += 1
+                self.progress.update_idletasks()
+
+        else:
+            self.ax.clear()
+            self.ax2.clear()
+            self.ax2.set_visible(False)
+            self.ax2.set_ylabel("")
+            self.ax2.set_yticks([])
+            self.ax2.tick_params(right=False, labelright=False)
+
+            plotted_any = False
+
+            for station, channels in station_channel_map.items():
+                self.status_var.set(f"Computing PSD for station {station}")
+                print(f"Computing PSD for station {station}...")
+
+                for channel in channels:
+                    result = _compute_station_channel_psd(station, channel)
+                    if result is None:
+                        continue
+
+                    self.ax.semilogx(
+                        result["freq"],
+                        result["psd_db"],
+                        lw=0.5,
+                        alpha=0.22
+                    )
+                    self.ax.semilogx(
+                        result["freq"],
+                        result["psd_smooth"],
+                        lw=1.8,
+                        label=f"{station}.{channel}"
+                    )
+                    plotted_any = True
+
+                self.progress["value"] += 1
+                self.progress.update_idletasks()
+
+            if noise_freq is not None and len(noise_freq) > 0:
+                self.ax.semilogx(
+                    noise_freq,
+                    noise_low,
+                    color="royalblue",
+                    ls="--",
+                    lw=1.5,
+                    label="NLNM"
+                )
+                self.ax.semilogx(
+                    noise_freq,
+                    noise_high,
+                    color="crimson",
+                    ls="--",
+                    lw=1.5,
+                    label="NHNM"
+                )
+
+            if not plotted_any:
+                messagebox.showwarning(
+                    "SANBA",
+                    "No valid PSD could be computed from the detected stations/channels."
+                )
+                return
+
+            self.ax.set_title(
+                f"PSD | stations in selected pairs | {fmin:.2f}-{fmax:.2f} Hz | "
+                f"window={window_length_sec:.1f}s overlap={overlap_frac:.2f}"
+            )
+            self.ax.set_xlabel("Frequency (Hz)")
+            self.ax.set_ylabel("Power (dB)")
+            self.ax.grid(True, which="both", ls="--", lw=0.5, alpha=0.5)
+            self.ax.spines["top"].set_visible(False)
+            self.ax.spines["right"].set_visible(False)
+            self.ax.legend(loc="best", fontsize="small")
+            self.fig.tight_layout()
+            self.canvas.draw()
+
+        self.status_var.set("PSD plotting completed.")
+    
     '''def cc(self, x1, x2, dt, lag0, lagu):
         #x1 = np.asarray(x1)
         #x2 = np.asarray(x2)
@@ -1500,6 +1967,7 @@ class PSVM(ttk.Frame):
 
                     corr_path = os.path.join(corr_root, pair_name, f"{pair_name}_corr.mseed")
                     stack_mseed_file_path = os.path.join(pair_stack_dir, f"{pair_name}_stacks.mseed")
+                    state_txt_path = os.path.join(pair_stack_dir, f"{pair_name}_stack_state.txt")
 
                     if not os.path.exists(corr_path):
                         print(f"Correlation file not found: {corr_path}")
@@ -1530,11 +1998,34 @@ class PSVM(ttk.Frame):
                     else:
                         stacks_stream = Stream()
 
-                    # Timestamp of the last stack that already existed BEFORE this run
+                    # ----------------------------------------------------------
+                    # Determine incremental cutoff from existing stacks
+                    # ----------------------------------------------------------
                     if len(stacks_stream) > 0:
                         existing_last_stack_time = stacks_stream[-1].stats.starttime
                     else:
                         existing_last_stack_time = None
+
+                    # Optional TXT state support:
+                    # if the state file exists, read the stored last stack midpoint.
+                    # we use the newest valid value between txt and stacks.mseed.
+                    if os.path.exists(state_txt_path):
+                        try:
+                            with open(state_txt_path, "r", encoding="utf-8") as f:
+                                lines = [line.strip() for line in f if line.strip()]
+                            state_dict = {}
+                            for line in lines:
+                                if "=" in line:
+                                    k, v = line.split("=", 1)
+                                    state_dict[k.strip()] = v.strip()
+
+                            txt_last_midpoint = state_dict.get("last_stack_midpoint_utc", "")
+                            if txt_last_midpoint:
+                                txt_last_time = UTCDateTime(txt_last_midpoint)
+                                if existing_last_stack_time is None or txt_last_time > existing_last_stack_time:
+                                    existing_last_stack_time = txt_last_time
+                        except Exception as e:
+                            print(f"Warning: could not read stack state file {state_txt_path}: {e}")
 
                     # ----------------------------------------------------------
                     # Estimate correlation time step from timestamps
@@ -1549,14 +2040,17 @@ class PSVM(ttk.Frame):
                     if corr_dt_seconds <= 0:
                         corr_dt_seconds = float(self.corr_window_size * (1.0 - self.corr_overlap))
 
-                    # Approximate number of traces needed to cover the requested stack window
+                    # Approximate number of traces needed to cover requested stack window
                     approx_window_length = max(
                         2,
                         int(np.ceil(self.stack_window_length_days * 86400.0 / corr_dt_seconds))
                     )
 
                     new_trace_added = False
-                    last_consumed_index = -1
+                    new_last_stack_time = existing_last_stack_time
+
+                    # Tracks midpoint timestamps created in THIS run to avoid duplicates
+                    created_midpoints_this_run = set()
 
                     # ----------------------------------------------------------
                     # Build moving stacks
@@ -1582,13 +2076,18 @@ class PSVM(ttk.Frame):
                             if len(window_range) < 2:
                                 continue
 
-                            # Midpoint timestamp of the stacked window
+                            # Midpoint timestamp of stacked window
                             first_time = window_range[0].stats.starttime
                             last_time = window_range[-1].stats.starttime
                             midpoint_time = first_time + (last_time - first_time) / 2.0
 
-                            # Skip only stacks that were already generated in previous runs
+                            # Skip stacks already generated in previous runs
                             if existing_last_stack_time is not None and midpoint_time <= existing_last_stack_time:
+                                continue
+
+                            # Skip duplicates created during the current run
+                            midpoint_key = str(midpoint_time)
+                            if midpoint_key in created_midpoints_this_run:
                                 continue
 
                             correlations = [tr.data for tr in window_range]
@@ -1599,13 +2098,11 @@ class PSVM(ttk.Frame):
                             new_trace.stats.sampling_rate = self.corr_resample_rate
                             stacks_stream.append(new_trace)
 
+                            created_midpoints_this_run.add(midpoint_key)
                             new_trace_added = True
 
-                            # Keep enough tail for future runs:
-                            # traces strictly before the last trace used here can be dropped,
-                            # but keep the last trace because it may participate in future stacks
-                            current_last_index = i + len(window_range) - 1
-                            last_consumed_index = max(last_consumed_index, current_last_index - 1)
+                            if new_last_stack_time is None or midpoint_time > new_last_stack_time:
+                                new_last_stack_time = midpoint_time
 
                             del correlations
                             del window_range
@@ -1616,18 +2113,10 @@ class PSVM(ttk.Frame):
                             continue
 
                     # ----------------------------------------------------------
-                    # Keep only the residual tail of corr_stream for future runs
-                    # ----------------------------------------------------------
-                    if last_consumed_index >= 0:
-                        residual_start = last_consumed_index + 1
-                        corr_stream = corr_stream[residual_start:]
-
-                    # ----------------------------------------------------------
                     # Save results
                     # ----------------------------------------------------------
                     if new_trace_added:
                         stacks_stream.sort(keys=["starttime"])
-                        corr_stream.sort(keys=["starttime"])
 
                         stacks_stream.write(
                             stack_mseed_file_path,
@@ -1636,11 +2125,20 @@ class PSVM(ttk.Frame):
                             dtype="float32"
                         )
 
-                        corr_stream.write(
-                            corr_path,
-                            format="MSEED",
-                            dtype="float32"
-                        )
+                        # Update txt state file
+                        try:
+                            with open(state_txt_path, "w", encoding="utf-8") as f:
+                                f.write(f"pair_name={pair_name}\n")
+                                f.write(f"stack_window_length_days={self.stack_window_length_days}\n")
+                                f.write(f"corr_window_size={self.corr_window_size}\n")
+                                f.write(f"corr_overlap={self.corr_overlap}\n")
+                                f.write(f"corr_dt_seconds={corr_dt_seconds}\n")
+                                f.write(f"approx_window_length={approx_window_length}\n")
+                                if new_last_stack_time is not None:
+                                    f.write(f"last_stack_midpoint_utc={new_last_stack_time.isoformat()}\n")
+                                f.write(f"n_stacks_total={len(stacks_stream)}\n")
+                        except Exception as e:
+                            print(f"Warning: could not write stack state file {state_txt_path}: {e}")
 
                         if self.stack_plot and len(stacks_stream) > 0:
                             self.ax.clear()
@@ -2355,6 +2853,243 @@ class PSVM(ttk.Frame):
 
     def plot_dvv_mean(self):
         pass
+
+    def _best_subplot_grid(self, nplots):
+        """
+        Return (nrows, ncols) using a near-square geometry.
+        """
+        if nplots <= 0:
+            return 1, 1
+
+        ncols = math.ceil(math.sqrt(nplots))
+        nrows = math.ceil(nplots / ncols)
+        return nrows, ncols
+
+    def _read_external_series_file(self, file_path):
+        """
+        Read external series from a text/csv file with at least 2 columns:
+        timestamp,value
+
+        Accepted separators:
+        comma, semicolon, tab, whitespace
+
+        Returns a DataFrame with columns:
+        - timestamp (UTC-aware)
+        - value (numeric)
+        """
+        df_ext = pd.read_csv(
+            file_path,
+            sep=r"[,\t; ]+",
+            engine="python",
+            comment="#"
+        )
+
+        if df_ext.shape[1] < 2:
+            raise ValueError("The selected file must contain at least two columns: timestamp and value.")
+
+        df_ext = df_ext.iloc[:, :2].copy()
+        df_ext.columns = ["timestamp", "value"]
+
+        df_ext["timestamp"] = pd.to_datetime(df_ext["timestamp"], utc=True, errors="coerce")
+        df_ext["value"] = pd.to_numeric(df_ext["value"], errors="coerce")
+        df_ext = df_ext.dropna(subset=["timestamp", "value"]).copy()
+
+        if df_ext.empty:
+            raise ValueError("No valid rows were found in the external file.")
+
+        df_ext = df_ext.sort_values("timestamp").reset_index(drop=True)
+        return df_ext
+
+    def _ask_external_series_options(self):
+        """
+        Popup window to configure the external series:
+        - label/name
+        - plot type: line, scatter, bar
+        - color
+        - optional min/max value limits
+        - optional min/max date limits
+
+        Date format expected:
+        YYYY-MM-DD
+        or
+        YYYY-MM-DD HH:MM:SS
+
+        Returns a dict or None if cancelled.
+        """
+        result = {
+            "ok": False,
+            "name": "External value",
+            "plot_type": "line",
+            "color": "tab:green",
+            "value_min": None,
+            "value_max": None,
+            "date_min": None,
+            "date_max": None
+        }
+
+        top = tk.Toplevel(self)
+        top.title("SANBA - External series options")
+        top.geometry("420x420")
+        top.resizable(False, False)
+        top.grab_set()
+
+        # --------------------------------------------------------------
+        # Name
+        # --------------------------------------------------------------
+        ttk.Label(top, text="Value name:").pack(pady=(12, 2))
+        name_var = tk.StringVar(value="External value")
+        entry_name = ttk.Entry(top, textvariable=name_var, width=38)
+        entry_name.pack()
+
+        # --------------------------------------------------------------
+        # Plot type
+        # --------------------------------------------------------------
+        ttk.Label(top, text="Plot type:").pack(pady=(10, 2))
+        plot_type_var = tk.StringVar(value="line")
+        combo = ttk.Combobox(
+            top,
+            textvariable=plot_type_var,
+            values=["line", "scatter", "bar"],
+            state="readonly",
+            width=18
+        )
+        combo.pack()
+
+        # --------------------------------------------------------------
+        # Color
+        # --------------------------------------------------------------
+        ttk.Label(top, text="Color:").pack(pady=(10, 2))
+        color_var = tk.StringVar(value="tab:green")
+
+        color_frame = ttk.Frame(top)
+        color_frame.pack()
+
+        color_entry = ttk.Entry(color_frame, textvariable=color_var, width=24)
+        color_entry.pack(side="left", padx=(0, 6))
+
+        def choose_color():
+            chosen = colorchooser.askcolor(title="Choose external series color")
+            if chosen and chosen[1]:
+                color_var.set(chosen[1])
+
+        ttk.Button(color_frame, text="Choose...", command=choose_color).pack(side="left")
+
+        # --------------------------------------------------------------
+        # Value limits
+        # --------------------------------------------------------------
+        ttk.Label(top, text="Value limits (optional):").pack(pady=(12, 2))
+
+        value_frame = ttk.Frame(top)
+        value_frame.pack()
+
+        ttk.Label(value_frame, text="Min:").grid(row=0, column=0, padx=4, pady=2, sticky="e")
+        value_min_var = tk.StringVar(value="")
+        ttk.Entry(value_frame, textvariable=value_min_var, width=14).grid(row=0, column=1, padx=4, pady=2)
+
+        ttk.Label(value_frame, text="Max:").grid(row=0, column=2, padx=4, pady=2, sticky="e")
+        value_max_var = tk.StringVar(value="")
+        ttk.Entry(value_frame, textvariable=value_max_var, width=14).grid(row=0, column=3, padx=4, pady=2)
+
+        # --------------------------------------------------------------
+        # Date limits
+        # --------------------------------------------------------------
+        ttk.Label(top, text="Date limits (optional):").pack(pady=(12, 2))
+
+        date_frame = ttk.Frame(top)
+        date_frame.pack()
+
+        ttk.Label(date_frame, text="Min date:").grid(row=0, column=0, padx=4, pady=2, sticky="e")
+        date_min_var = tk.StringVar(value="")
+        ttk.Entry(date_frame, textvariable=date_min_var, width=22).grid(row=0, column=1, padx=4, pady=2)
+
+        ttk.Label(date_frame, text="Max date:").grid(row=1, column=0, padx=4, pady=2, sticky="e")
+        date_max_var = tk.StringVar(value="")
+        ttk.Entry(date_frame, textvariable=date_max_var, width=22).grid(row=1, column=1, padx=4, pady=2)
+
+        ttk.Label(
+            top,
+            text="Accepted date formats: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
+            font=("Segoe UI", 8)
+        ).pack(pady=(4, 0))
+
+        # --------------------------------------------------------------
+        # Buttons
+        # --------------------------------------------------------------
+        btn_frame = ttk.Frame(top)
+        btn_frame.pack(pady=18)
+
+        def parse_optional_float(value_str, field_name):
+            value_str = value_str.strip()
+            if value_str == "":
+                return None
+            try:
+                return float(value_str)
+            except Exception:
+                raise ValueError(f"Invalid numeric value for '{field_name}': {value_str}")
+
+        def parse_optional_date(date_str, field_name):
+            date_str = date_str.strip()
+            if date_str == "":
+                return None
+            dt = pd.to_datetime(date_str, utc=True, errors="coerce")
+            if pd.isna(dt):
+                raise ValueError(
+                    f"Invalid date for '{field_name}': {date_str}\n"
+                    f"Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
+                )
+            return dt
+
+        def on_ok():
+            try:
+                result["name"] = name_var.get().strip() or "External value"
+                result["plot_type"] = plot_type_var.get().strip() or "line"
+                result["color"] = color_var.get().strip() or "tab:green"
+
+                result["value_min"] = parse_optional_float(value_min_var.get(), "Min value")
+                result["value_max"] = parse_optional_float(value_max_var.get(), "Max value")
+                result["date_min"] = parse_optional_date(date_min_var.get(), "Min date")
+                result["date_max"] = parse_optional_date(date_max_var.get(), "Max date")
+
+                if (
+                    result["value_min"] is not None and
+                    result["value_max"] is not None and
+                    result["value_min"] > result["value_max"]
+                ):
+                    raise ValueError("Min value cannot be greater than max value.")
+
+                if (
+                    result["date_min"] is not None and
+                    result["date_max"] is not None and
+                    result["date_min"] > result["date_max"]
+                ):
+                    raise ValueError("Min date cannot be greater than max date.")
+
+                result["ok"] = True
+                top.destroy()
+
+            except Exception as e:
+                messagebox.showerror("SANBA", str(e), parent=top)
+
+        def on_cancel():
+            top.destroy()
+
+        ttk.Button(btn_frame, text="OK", command=on_ok).pack(side="left", padx=6)
+        ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side="left", padx=6)
+
+        top.wait_window()
+
+        if result["ok"]:
+            return {
+                "name": result["name"],
+                "plot_type": result["plot_type"],
+                "color": result["color"],
+                "value_min": result["value_min"],
+                "value_max": result["value_max"],
+                "date_min": result["date_min"],
+                "date_max": result["date_max"]
+            }
+
+        return None
     
     def plot_dvv(self):
         if self.current_project_path is None:
@@ -2375,13 +3110,85 @@ class PSVM(ttk.Frame):
             "SANBA",
             "Plot similarity in second y axis?"
         )
+
         plot_separately = messagebox.askyesno(
             "SANBA",
             "Plot dv/v separately for each pair of stations?"
         )
 
+        # --------------------------------------------------------------
+        # Optional external series
+        # --------------------------------------------------------------
+        plot_external = messagebox.askyesno(
+            "SANBA",
+            "Load an external time series file?"
+        )
+
+        external_df = None
+        external_opts = None
+
+        if plot_external:
+            external_file = filedialog.askopenfilename(
+                title="Select external time series file",
+                filetypes=[
+                    ("Text/CSV files", "*.csv *.txt *.dat"),
+                    ("All files", "*.*")
+                ]
+            )
+
+            if not external_file:
+                plot_external = False
+            else:
+                external_opts = self._ask_external_series_options()
+                if external_opts is None:
+                    plot_external = False
+                else:
+                    try:
+                        external_df = self._read_external_series_file(external_file)
+
+                        try:
+                            external_df["timestamp_local"] = external_df["timestamp"].dt.tz_convert(self.output_timezone)
+                        except Exception:
+                            print(
+                                f"Invalid or unsupported timezone '{self.output_timezone}' for external data. Falling back to UTC."
+                            )
+                            external_df["timestamp_local"] = external_df["timestamp"]
+
+                        # --------------------------------------------------------------
+                        # Apply optional filters to external data
+                        # --------------------------------------------------------------
+                        if external_opts["value_min"] is not None:
+                            external_df = external_df[external_df["value"] >= external_opts["value_min"]]
+
+                        if external_opts["value_max"] is not None:
+                            external_df = external_df[external_df["value"] <= external_opts["value_max"]]
+
+                        if external_opts["date_min"] is not None:
+                            external_df = external_df[external_df["timestamp"] >= external_opts["date_min"]]
+
+                        if external_opts["date_max"] is not None:
+                            external_df = external_df[external_df["timestamp"] <= external_opts["date_max"]]
+
+                        external_df = external_df.sort_values("timestamp").reset_index(drop=True)
+
+                        if external_df.empty:
+                            messagebox.showerror(
+                                "SANBA",
+                                "No valid external data remained after applying the selected filters."
+                            )
+                            return
+
+                    except Exception as e:
+                        messagebox.showerror(
+                            "SANBA",
+                            f"Error reading external series file:\n{external_file}\n\n{e}"
+                        )
+                        return
+
         data_dir = os.path.join(self.current_project_path, "data")
         out_dir = os.path.join(self.current_project_path, "out")
+        dvv_root = os.path.join(out_dir, "dvv")
+        os.makedirs(dvv_root, exist_ok=True)
 
         # --------------------------------------------------------------
         # Build full list of pair/channel combinations
@@ -2431,31 +3238,45 @@ class PSVM(ttk.Frame):
             )
             return
 
+        # --------------------------------------------------------------
+        # Read and validate dv/v data first
+        # --------------------------------------------------------------
+        series_data = []
+
         self.progress["value"] = 0
         self.progress["maximum"] = len(pair_channel_list)
 
-        if not plot_separately:
-            self.ax.clear()
-            self.ax2.clear()
-
         for station1, station2, channel1, channel2 in pair_channel_list:
             self.status_var.set(
-                f"Plotting the dv/v series for {station1} {channel1} and {station2} {channel2}"
-            )
-            print(
-                f"Plotting dv/v for {station1} {channel1} and {station2} {channel2} "
-                f"({self.mwcs_freq_min}-{self.mwcs_freq_max} Hz)..."
+                f"Loading dv/v series for {station1} {channel1} and {station2} {channel2}"
             )
 
             pair_name = f"{station1}_{station2}_{channel1}_{channel2}"
-            dvv_path = os.path.join(out_dir, "dvv", pair_name)
-            csv_file = os.path.join(
-                dvv_path,
-                f"{pair_name}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_dvv.csv"
-            )
+            dvv_path = os.path.join(dvv_root, pair_name)
+            csv_file = None
 
-            if not os.path.exists(csv_file):
-                print(f"CSV file not found: {csv_file}")
+            if os.path.isdir(dvv_path):
+                dvv_files = [
+                    f for f in os.listdir(dvv_path)
+                    if f.lower().endswith("_dvv.csv")
+                ]
+
+                if len(dvv_files) == 1:
+                    csv_file = os.path.join(dvv_path, dvv_files[0])
+
+                elif len(dvv_files) > 1:
+                    print(f"Multiple dvv CSV files found in {dvv_path}, using the first one:")
+                    for f in dvv_files:
+                        print("   ", f)
+                    csv_file = os.path.join(dvv_path, dvv_files[0])
+
+                else:
+                    print(f"No '_dvv.csv' file found in {dvv_path}")
+
+            else:
+                print(f"Pair folder not found: {dvv_path}")
+
+            if csv_file is None or not os.path.exists(csv_file):
                 self.progress["value"] += 1
                 self.progress.update_idletasks()
                 continue
@@ -2464,10 +3285,6 @@ class PSVM(ttk.Frame):
                 df = pd.read_csv(csv_file)
             except Exception as e:
                 print(f"Error reading CSV file {csv_file}: {e}")
-                messagebox.showerror(
-                    "SANBA",
-                    f"Error reading CSV file:\n{csv_file}\n\n{e}"
-                )
                 self.progress["value"] += 1
                 self.progress.update_idletasks()
                 continue
@@ -2484,10 +3301,6 @@ class PSVM(ttk.Frame):
                 self.progress.update_idletasks()
                 continue
 
-            # ----------------------------------------------------------
-            # Parse timestamps written by the new compute_dvv():
-            # UTC ISO strings like 2026-04-09T15:30:00Z
-            # ----------------------------------------------------------
             try:
                 df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
 
@@ -2506,17 +3319,10 @@ class PSVM(ttk.Frame):
 
             except Exception as e:
                 print(f"Error parsing timestamps in {csv_file}: {e}")
-                messagebox.showerror(
-                    "SANBA",
-                    f"Error parsing timestamps in:\n{csv_file}\n\n{e}"
-                )
                 self.progress["value"] += 1
                 self.progress.update_idletasks()
                 continue
 
-            # ----------------------------------------------------------
-            # Numeric coercion
-            # ----------------------------------------------------------
             df["dvv"] = pd.to_numeric(df["dvv"], errors="coerce")
 
             if "dvv_std" in df.columns:
@@ -2535,9 +3341,6 @@ class PSVM(ttk.Frame):
 
             df = df.sort_values("timestamp").reset_index(drop=True)
 
-            # ----------------------------------------------------------
-            # Determine similarity usability
-            # ----------------------------------------------------------
             has_similarity = (
                 "similarity" in df.columns and df["similarity"].notna().any()
             )
@@ -2546,120 +3349,275 @@ class PSVM(ttk.Frame):
             if plot_similarity and not has_similarity:
                 print(f"'similarity' column missing or empty in {csv_file}. Similarity will not be plotted.")
 
-            # ----------------------------------------------------------
-            # Prepare axes
-            # ----------------------------------------------------------
-            if plot_separately:
-                self.ax.clear()
-                self.ax2.clear()
-
-            if use_similarity:
-                self.ax2.set_visible(True)
-                self.ax2.set_ylabel("Similarity")
-                self.ax2.tick_params(right=True, labelright=True)
-            else:
-                self.ax2.set_visible(False)
-                self.ax2.set_ylabel("")
-                self.ax2.set_yticks([])
-                self.ax2.tick_params(right=False, labelright=False)
-
-            # ----------------------------------------------------------
-            # Compute plotted dv/v series
-            # ----------------------------------------------------------
             if self.mwcs_reference == "following":
-                dvv_plot = df["dvv"].cumsum()
+                df["dvv_plot"] = df["dvv"].cumsum()
             else:
-                dvv_plot = df["dvv"]
+                df["dvv_plot"] = df["dvv"]
 
-            # ----------------------------------------------------------
-            # Plot
-            # ----------------------------------------------------------
-            if plot_separately:
-                self.ax.plot(
+            series_data.append({
+                "station1": station1,
+                "station2": station2,
+                "channel1": channel1,
+                "channel2": channel2,
+                "pair_name": pair_name,
+                "dvv_path": dvv_path,
+                "df": df,
+                "use_similarity": use_similarity
+            })
+
+            self.progress["value"] += 1
+            self.progress.update_idletasks()
+
+        if not series_data:
+            messagebox.showwarning(
+                "SANBA",
+                "No valid dv/v series were found to plot."
+            )
+            return
+
+        # --------------------------------------------------------------
+        # Plot together in a single axis
+        # --------------------------------------------------------------
+        if not plot_separately:
+            self.fig.clf()
+            ax = self.fig.add_subplot(111)
+            ax_sim = None
+            ax_ext = None
+
+            any_similarity = any(item["use_similarity"] for item in series_data)
+
+            if any_similarity:
+                ax_sim = ax.twinx()
+                ax_sim.set_ylabel("Similarity")
+
+            if plot_external and external_df is not None:
+                if ax_sim is None:
+                    ax_ext = ax.twinx()
+                else:
+                    ax_ext = ax.twinx()
+                    ax_ext.spines["right"].set_position(("axes", 1.12))
+                ax_ext.set_ylabel(external_opts["name"])
+
+            for item in series_data:
+                df = item["df"]
+                label = f"{item['station1']} {item['channel1']} - {item['station2']} {item['channel2']}"
+
+                ax.plot(
                     df["timestamp_local"],
-                    dvv_plot,
-                    label="dv/v"
-                )
-
-                if use_similarity:
-                    self.ax2.plot(
-                        df["timestamp_local"],
-                        df["similarity"],
-                        ls="--",
-                        c="k",
-                        label="Similarity"
-                    )
-            else:
-                label = f"{station1} {channel1} - {station2} {channel2}"
-
-                self.ax.plot(
-                    df["timestamp_local"],
-                    dvv_plot,
+                    df["dvv_plot"],
                     label=label
                 )
 
-                if use_similarity:
-                    self.ax2.plot(
+                if item["use_similarity"] and ax_sim is not None:
+                    ax_sim.plot(
                         df["timestamp_local"],
                         df["similarity"],
                         ls="--",
                         label=f"Similarity {label}"
                     )
 
+            if plot_external and external_df is not None and ax_ext is not None:
+                if external_opts["plot_type"] == "line":
+                    ax_ext.plot(
+                        external_df["timestamp_local"],
+                        external_df["value"],
+                        color=external_opts["color"],
+                        label=external_opts["name"]
+                    )
+                elif external_opts["plot_type"] == "scatter":
+                    ax_ext.scatter(
+                        external_df["timestamp_local"],
+                        external_df["value"],
+                        color=external_opts["color"],
+                        s=12,
+                        label=external_opts["name"]
+                    )
+                elif external_opts["plot_type"] == "bar":
+                    # width in days for datetime axis
+                    ax_ext.bar(
+                        external_df["timestamp_local"],
+                        external_df["value"],
+                        width=0.01,
+                        color=external_opts["color"],
+                        label=external_opts["name"],
+                        alpha=0.7
+                    )
+
+            ax.set_ylabel("dv/v (%)")
+            ax.grid(True)
+            ax.spines["top"].set_visible(False)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m/%Y\n%H:%M"))
+            ax.legend(loc="best", fontsize="small")
+
+            if ax_sim is not None:
+                ax_sim.legend(loc="upper right", fontsize="small")
+
+            if ax_ext is not None:
+                ax_ext.legend(loc="lower right", fontsize="small")
+
+            all_dates = pd.concat([item["df"]["timestamp_local"] for item in series_data], axis=0)
+            ax.set_xlim(all_dates.min(), all_dates.max())
+
+            title = f"dv/v series | {self.mwcs_freq_min}-{self.mwcs_freq_max} Hz"
+            if self.mwcs_reference == "following":
+                title += " | cumulative mode"
+            #ax.set_title(title)
+
+            #self.fig.tight_layout()
+            self.fig.canvas.draw()
+
+            self.status_var.set(
+                f"Completed plotting dv/v series ({self.mwcs_freq_min}-{self.mwcs_freq_max} Hz)"
+            )
+            return
+
+        # --------------------------------------------------------------
+        # Plot separately in a grid of subplots
+        # --------------------------------------------------------------
+        nplots = len(series_data)
+        nrows, ncols = self._best_subplot_grid(nplots)
+
+        self.fig.clf()
+
+        # Increase right margin because some subplots may have 2 right axes
+        if plot_external or plot_similarity:
+            self.fig.subplots_adjust(
+                left=0.06,
+                right=0.88,
+                top=0.94,
+                bottom=0.08,
+                wspace=0.35,
+                hspace=0.55
+            )
+
+        axes = self.fig.subplots(nrows, ncols)#, squeeze=False)
+        flat_axes = axes.flatten()
+
+        for i, item in enumerate(series_data):
+            ax = flat_axes[i]
+            df = item["df"]
+
+            ax_sim = None
+            ax_ext = None
+
+            if item["use_similarity"]:
+                ax_sim = ax.twinx()
+                ax_sim.set_ylabel("Similarity", fontsize=8)
+                ax_sim.tick_params(axis="y", labelsize=8)
+
+            if plot_external and external_df is not None:
+                if ax_sim is None:
+                    ax_ext = ax.twinx()
+                else:
+                    ax_ext = ax.twinx()
+                    ax_ext.spines["right"].set_position(("axes", 1.12))
+                ax_ext.set_ylabel(external_opts["name"], fontsize=8)
+                ax_ext.tick_params(axis="y", labelsize=8)
+
+            # Main dv/v plot
+            ax.plot(
+                df["timestamp_local"],
+                df["dvv_plot"],
+                label="dv/v"
+            )
+
             # Uncertainty band
-            if plot_separately and "dvv_std" in df.columns:
+            if "dvv_std" in df.columns:
                 valid_std = df["dvv_std"].notna()
                 if valid_std.any():
-                    self.ax.fill_between(
+                    ax.fill_between(
                         df.loc[valid_std, "timestamp_local"],
-                        dvv_plot.loc[valid_std] - df.loc[valid_std, "dvv_std"],
-                        dvv_plot.loc[valid_std] + df.loc[valid_std, "dvv_std"],
+                        df.loc[valid_std, "dvv_plot"] - df.loc[valid_std, "dvv_std"],
+                        df.loc[valid_std, "dvv_plot"] + df.loc[valid_std, "dvv_std"],
                         alpha=0.25
                     )
 
-            self.ax.set_ylabel("dv/v (%)")
-            self.ax.grid(True)
-            self.ax.spines["right"].set_visible(False)
-            self.ax.spines["top"].set_visible(False)
-            self.ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m/%Y\n%H:%M"))
+            # Similarity
+            if item["use_similarity"] and ax_sim is not None:
+                ax_sim.plot(
+                    df["timestamp_local"],
+                    df["similarity"],
+                    ls="--",
+                    c="k",
+                    label="Similarity"
+                )
+
+            # External series
+            if plot_external and external_df is not None and ax_ext is not None:
+                if external_opts["plot_type"] == "line":
+                    ax_ext.plot(
+                        external_df["timestamp_local"],
+                        external_df["value"],
+                        color=external_opts["color"],
+                        label=external_opts["name"]
+                    )
+                elif external_opts["plot_type"] == "scatter":
+                    ax_ext.scatter(
+                        external_df["timestamp_local"],
+                        external_df["value"],
+                        color=external_opts["color"],
+                        s=10,
+                        label=external_opts["name"]
+                    )
+                elif external_opts["plot_type"] == "bar":
+                    ax_ext.bar(
+                        external_df["timestamp_local"],
+                        external_df["value"],
+                        width=0.01,
+                        color=external_opts["color"],
+                        alpha=0.7,
+                        label=external_opts["name"]
+                    )
+
+            ax.set_ylabel("dv/v (%)", fontsize=8)
+            ax.tick_params(axis="both", labelsize=8)
+            #ax.grid(True)
+            ax.spines["top"].set_visible(False)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m/%Y\n%H:%M"))
 
             min_date = df["timestamp_local"].min()
             max_date = df["timestamp_local"].max()
-            self.ax.set_xlim(min_date, max_date)
+            ax.set_xlim(min_date, max_date)
 
-            if plot_separately:
-                self.ax.legend(loc="upper right", fontsize="small")
-
-                if use_similarity:
-                    self.ax2.legend(loc="lower right", fontsize="small")
-
-                self.ax.set_title(
-                    f"{station1} {channel1} - {station2} {channel2} | "
-                    f"{df['timestamp_local'].iloc[0].strftime('%d/%m/%Y')} - "
-                    f"{df['timestamp_local'].iloc[-1].strftime('%d/%m/%Y')} | "
-                    f"{self.mwcs_freq_min}-{self.mwcs_freq_max} Hz"
-                )
-
-                self.fig.savefig(
-                    os.path.join(
-                        dvv_path,
-                        f"{pair_name}_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz_dvv.png"
-                    ),
-                    dpi=300
-                )
-            else:
-                self.ax.legend(loc="best", fontsize="small")
-                if use_similarity:
-                    self.ax2.legend(loc="lower right", fontsize="small")
-
-            self.ax.figure.canvas.draw()
-
-            self.status_var.set(
-                f"Completed plotting dv/v series for {station1} {channel1} and "
-                f"{station2} {channel2} ({self.mwcs_freq_min}-{self.mwcs_freq_max} Hz)"
+            ax.set_title(
+                f"{item['station1']} {item['channel1']} - {item['station2']} {item['channel2']} | {df['timestamp_local'].iloc[0].strftime('%d/%m/%Y')} - {df['timestamp_local'].iloc[-1].strftime('%d/%m/%Y')}",fontsize=9
             )
-            self.progress["value"] += 1
-            self.progress.update_idletasks()
+
+            # Build merged legend
+            handles, labels = ax.get_legend_handles_labels()
+            if ax_sim is not None:
+                h2, l2 = ax_sim.get_legend_handles_labels()
+                handles += h2
+                labels += l2
+            if ax_ext is not None:
+                h3, l3 = ax_ext.get_legend_handles_labels()
+                handles += h3
+                labels += l3
+
+            if handles:
+                ax.legend(handles, labels, loc="best", fontsize=7)
+
+        # Hide unused axes
+        for j in range(nplots, len(flat_axes)):
+            flat_axes[j].set_visible(False)
+
+        '''self.fig.suptitle(
+            f"dv/v series | {self.mwcs_freq_min}-{self.mwcs_freq_max} Hz",
+            fontsize=12
+        )'''
+
+        self.fig.canvas.draw()
+
+        # Save the grid figure
+        grid_file = os.path.join(
+            dvv_root,
+            f"dvv_grid_{self.mwcs_freq_min}-{self.mwcs_freq_max}Hz.png"
+        )
+        self.fig.savefig(grid_file, dpi=300, bbox_inches="tight")
+
+        self.status_var.set(
+            f"Completed plotting dv/v series grid ({self.mwcs_freq_min}-{self.mwcs_freq_max} Hz)"
+        )
 
 if __name__ == "__main__":
     root = tk.Tk()
