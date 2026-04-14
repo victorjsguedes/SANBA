@@ -24,6 +24,7 @@ from scipy.interpolate import griddata
 from threading import Thread
 import zoneinfo
 import math
+import re
 
 class ToolTip:
     def __init__(self, widget, text):
@@ -174,7 +175,8 @@ class PSVM(ttk.Frame):
         plotting_menu = tk.Menu(menubar, tearoff=False)
         menubar.add_cascade(label="Plot", menu=plotting_menu)
         plotting_menu.add_command(label="Plot dv/v", command=self.plot_dvv)
-
+        plotting_menu.add_command(label="Plot dv/v (advanced)", command=self.plot_dvv_advance)
+        
     def _build_options_menu(self, menubar):
         options_menu = tk.Menu(menubar, tearoff=False)
         menubar.add_cascade(label="Options", menu=options_menu)
@@ -2900,6 +2902,753 @@ class PSVM(ttk.Frame):
         df_ext = df_ext.sort_values("timestamp").reset_index(drop=True)
         return df_ext
 
+    def _ask_plot_dvv_advance_options(self):
+        """
+        Ask plotting options for plot_dvv_advance().
+
+        Returns a dict like:
+        {
+            "isolate_by_station": bool,
+            "isolate_by_channel": bool,
+            "compute_mean": bool,
+            "resample_rule": str,
+            "min_count": int
+        }
+        or None if cancelled.
+        """
+        result = {"ok": False}
+
+        top = tk.Toplevel(self)
+        top.title("SANBA - Advanced dv/v plotting")
+        top.geometry("380x300")
+        top.resizable(False, False)
+        top.grab_set()
+
+        # --------------------------------------------------------------
+        # Checkboxes
+        # --------------------------------------------------------------
+        isolate_station_var = tk.BooleanVar(value=False)
+        isolate_channel_var = tk.BooleanVar(value=False)
+        compute_mean_var = tk.BooleanVar(value=False)
+
+        ttk.Label(top, text="Select plotting options:").pack(pady=(12, 6))
+
+        ttk.Checkbutton(
+            top,
+            text="isolate plotting by common station",
+            variable=isolate_station_var
+        ).pack(anchor="w", padx=18, pady=3)
+
+        ttk.Checkbutton(
+            top,
+            text="isolate plotting by common channel",
+            variable=isolate_channel_var
+        ).pack(anchor="w", padx=18, pady=3)
+
+        ttk.Checkbutton(
+            top,
+            text="compute mean",
+            variable=compute_mean_var
+        ).pack(anchor="w", padx=18, pady=3)
+
+        # --------------------------------------------------------------
+        # Mean parameters
+        # --------------------------------------------------------------
+        ttk.Label(top, text="Mean parameters:", font=("Segoe UI", 9, "bold")).pack(pady=(12, 4))
+
+        param_frame = ttk.Frame(top)
+        param_frame.pack()
+
+        # Resample rule
+        ttk.Label(param_frame, text="Resample rule:").grid(row=0, column=0, padx=5, pady=3, sticky="e")
+
+        resample_var = tk.StringVar(value="1D")
+        ttk.Entry(param_frame, textvariable=resample_var, width=12).grid(row=0, column=1, padx=5, pady=3)
+
+        # Min count
+        ttk.Label(param_frame, text="Min valid series:").grid(row=1, column=0, padx=5, pady=3, sticky="e")
+
+        min_count_var = tk.StringVar(value="2")
+        ttk.Entry(param_frame, textvariable=min_count_var, width=12).grid(row=1, column=1, padx=5, pady=3)
+
+        ttk.Label(
+            top,
+            text="Examples: 1D, 12H, 6H, 7D",
+            font=("Segoe UI", 8)
+        ).pack(pady=(4, 0))
+
+        # --------------------------------------------------------------
+        # Buttons
+        # --------------------------------------------------------------
+        btn_frame = ttk.Frame(top)
+        btn_frame.pack(pady=14)
+
+        def on_ok():
+            try:
+                resample_rule = resample_var.get().strip()
+                if not resample_rule:
+                    raise ValueError("Resample rule cannot be empty.")
+
+                try:
+                    min_count = int(min_count_var.get().strip())
+                    if min_count < 1:
+                        raise ValueError
+                except Exception:
+                    raise ValueError("Min valid series must be an integer ≥ 1.")
+
+                result["ok"] = True
+                result["isolate_by_station"] = isolate_station_var.get()
+                result["isolate_by_channel"] = isolate_channel_var.get()
+                result["compute_mean"] = compute_mean_var.get()
+                result["resample_rule"] = resample_rule
+                result["min_count"] = min_count
+
+                top.destroy()
+
+            except Exception as e:
+                messagebox.showerror("SANBA", str(e), parent=top)
+
+        def on_cancel():
+            top.destroy()
+
+        ttk.Button(btn_frame, text="OK", command=on_ok).pack(side="left", padx=6)
+        ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side="left", padx=6)
+
+        top.wait_window()
+
+        if not result["ok"]:
+            return None
+
+        return {
+            "isolate_by_station": result["isolate_by_station"],
+            "isolate_by_channel": result["isolate_by_channel"],
+            "compute_mean": result["compute_mean"],
+            "resample_rule": result["resample_rule"],
+            "min_count": result["min_count"]
+        }
+
+    def plot_dvv_advance(self):
+
+        if self.current_project_path is None:
+            messagebox.showwarning(
+                "SANBA",
+                "No project path detected. Create or load a project to continue."
+            )
+            return
+
+        if not self.pairs:
+            messagebox.showwarning(
+                "SANBA",
+                "No pair(s) of station(s) detected. Select stations to continue."
+            )
+            return
+
+        out_dir = os.path.join(self.current_project_path, "out")
+        dvv_root = os.path.join(out_dir, "dvv")
+
+        if not os.path.isdir(dvv_root):
+            messagebox.showwarning(
+                "SANBA",
+                f"dv/v root folder not found:\n{dvv_root}"
+            )
+            return
+
+        # --------------------------------------------------------------
+        # Ask plotting logic options
+        # --------------------------------------------------------------
+        adv_opts = self._ask_plot_dvv_advance_options()
+        if adv_opts is None:
+            return
+
+        isolate_by_station = adv_opts["isolate_by_station"]
+        isolate_by_channel = adv_opts["isolate_by_channel"]
+        compute_mean = adv_opts["compute_mean"]
+        resample_rule = adv_opts["resample_rule"]
+        min_count = adv_opts["min_count"]
+
+        if not isolate_by_station and not isolate_by_channel:
+            messagebox.showwarning(
+                "SANBA",
+                "Select at least one of these options:\n"
+                "- isolate plotting by common station\n"
+                "- isolate plotting by common channel"
+            )
+            return
+
+        # --------------------------------------------------------------
+        # Optional external series
+        # --------------------------------------------------------------
+        plot_external = messagebox.askyesno(
+            "SANBA",
+            "Load an external time series file to plot on a secondary y axis?"
+        )
+
+        external_df = None
+        external_opts = None
+
+        if plot_external:
+            external_file = filedialog.askopenfilename(
+                title="Select external time series file",
+                filetypes=[
+                    ("Text/CSV files", "*.csv *.txt *.dat"),
+                    ("All files", "*.*")
+                ]
+            )
+
+            if not external_file:
+                plot_external = False
+            else:
+                external_opts = self._ask_external_series_options()
+                if external_opts is None:
+                    plot_external = False
+                else:
+                    try:
+                        external_df = self._read_external_series_file(external_file)
+
+                        if external_opts.get("value_min") is not None:
+                            external_df = external_df[
+                                external_df["value"] >= external_opts["value_min"]
+                            ]
+
+                        if external_opts.get("value_max") is not None:
+                            external_df = external_df[
+                                external_df["value"] <= external_opts["value_max"]
+                            ]
+
+                        if external_opts.get("date_min") is not None:
+                            external_df = external_df[
+                                external_df["timestamp"] >= external_opts["date_min"]
+                            ]
+
+                        if external_opts.get("date_max") is not None:
+                            external_df = external_df[
+                                external_df["timestamp"] <= external_opts["date_max"]
+                            ]
+
+                        external_df = external_df.sort_values("timestamp").reset_index(drop=True)
+
+                        if external_df.empty:
+                            messagebox.showerror(
+                                "SANBA",
+                                "No valid external data remained after applying the selected filters."
+                            )
+                            return
+
+                        try:
+                            external_df["timestamp_local"] = external_df["timestamp"].dt.tz_convert(
+                                self.output_timezone
+                            )
+                        except Exception:
+                            print(
+                                f"Invalid or unsupported timezone '{self.output_timezone}' "
+                                f"for external data. Falling back to UTC."
+                            )
+                            external_df["timestamp_local"] = external_df["timestamp"]
+
+                    except Exception as e:
+                        messagebox.showerror(
+                            "SANBA",
+                            f"Error reading external series file:\n{external_file}\n\n{e}"
+                        )
+                        return
+
+        # --------------------------------------------------------------
+        # Helpers
+        # --------------------------------------------------------------
+        def parse_pair_folder_name(folder_name):
+            """
+            Expected folder pattern:
+            station1_station2_channel1_channel2
+            """
+            parts = folder_name.split("_")
+            if len(parts) < 4:
+                return None
+
+            channel1 = parts[-2]
+            channel2 = parts[-1]
+            station_tokens = parts[:-2]
+
+            if len(station_tokens) != 2:
+                return None
+
+            station1, station2 = station_tokens
+            return station1, station2, channel1, channel2
+
+        def find_only_dvv_csv(pair_folder):
+            if not os.path.isdir(pair_folder):
+                return None
+
+            files = [
+                f for f in os.listdir(pair_folder)
+                if f.lower().endswith("_dvv.csv")
+            ]
+
+            if len(files) == 1:
+                return os.path.join(pair_folder, files[0])
+
+            if len(files) > 1:
+                print(f"Multiple '_dvv.csv' files found in {pair_folder}. Using the first one.")
+                for f in files:
+                    print("   ", f)
+                return os.path.join(pair_folder, sorted(files)[0])
+
+            return None
+
+        def read_dvv_csv(csv_file):
+            df = pd.read_csv(csv_file)
+
+            if "timestamp" not in df.columns:
+                raise ValueError(f"'timestamp' column not found in {csv_file}")
+
+            if "dvv" not in df.columns:
+                raise ValueError(f"'dvv' column not found in {csv_file}")
+
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+            df["dvv"] = pd.to_numeric(df["dvv"], errors="coerce")
+
+            if "dvv_std" in df.columns:
+                df["dvv_std"] = pd.to_numeric(df["dvv_std"], errors="coerce")
+
+            if "similarity" in df.columns:
+                df["similarity"] = pd.to_numeric(df["similarity"], errors="coerce")
+
+            df = df.dropna(subset=["timestamp", "dvv"]).copy()
+
+            if df.empty:
+                raise ValueError(f"No valid rows in {csv_file}")
+
+            df = df.sort_values("timestamp").reset_index(drop=True)
+
+            try:
+                df["timestamp_local"] = df["timestamp"].dt.tz_convert(self.output_timezone)
+            except Exception:
+                print(
+                    f"Invalid or unsupported timezone '{self.output_timezone}'. "
+                    f"Falling back to UTC."
+                )
+                df["timestamp_local"] = df["timestamp"]
+
+            if self.mwcs_reference == "following":
+                df["dvv_plot"] = df["dvv"].cumsum()
+            else:
+                df["dvv_plot"] = df["dvv"]
+
+            return df
+
+        def add_to_group(group_key, entry, groups_dict):
+            if group_key not in groups_dict:
+                groups_dict[group_key] = []
+            groups_dict[group_key].append(entry)
+
+        def group_title(group_key):
+            if isinstance(group_key, tuple):
+                return f"{group_key[0]} | {group_key[1]}"
+            return str(group_key)
+
+        def series_label(entry):
+            return (
+                f"{entry['station1']} {entry['channel1']} - "
+                f"{entry['station2']} {entry['channel2']}"
+            )
+
+        def compute_group_mean(entries, rule="1D", min_count=1, interp_limit=2):
+            """
+            Compute a synchronized mean dv/v series by:
+            1) resampling each series to a common regular time grid
+            2) interpolating missing values on that grid
+            3) averaging across series
+            """
+            series_list = []
+
+            for i, entry in enumerate(entries):
+                df = entry["df"][["timestamp", "dvv_plot"]].copy()
+                df = df.dropna(subset=["timestamp", "dvv_plot"]).copy()
+
+                if df.empty:
+                    continue
+
+                df = df.sort_values("timestamp").drop_duplicates(subset="timestamp")
+                df = df.set_index("timestamp")
+
+                s = df["dvv_plot"].resample(rule).mean()
+                s = s.interpolate(
+                    method="time",
+                    limit=interp_limit,
+                    limit_direction="both"
+                )
+
+                s.name = f"series_{i}"
+                series_list.append(s)
+
+            if not series_list:
+                return None
+
+            merged = pd.concat(series_list, axis=1)
+
+            merged["n"] = merged.notna().sum(axis=1)
+            value_cols = [c for c in merged.columns if c != "n"]
+            merged["mean_dvv"] = merged[value_cols].mean(axis=1, skipna=True)
+
+            merged = merged[merged["n"] >= min_count].copy()
+            merged = merged.dropna(subset=["mean_dvv"])
+
+            if merged.empty:
+                return None
+
+            merged = merged.reset_index()
+
+            try:
+                merged["timestamp_local"] = merged["timestamp"].dt.tz_convert(self.output_timezone)
+            except Exception:
+                merged["timestamp_local"] = merged["timestamp"]
+
+            return merged[["timestamp", "timestamp_local", "mean_dvv", "n"]]
+
+        # --------------------------------------------------------------
+        # Build selected station pairs from self.pairs
+        # --------------------------------------------------------------
+        selected_pair_keys = {
+            tuple(sorted((station1, station2)))
+            for station1, station2 in self.pairs
+        }
+
+        # --------------------------------------------------------------
+        # Scan dvv folders and load only those matching self.pairs
+        # --------------------------------------------------------------
+        folder_names = [
+            f for f in os.listdir(dvv_root)
+            if os.path.isdir(os.path.join(dvv_root, f))
+        ]
+
+        if not folder_names:
+            messagebox.showwarning(
+                "SANBA",
+                f"No pair folders were found in:\n{dvv_root}"
+            )
+            return
+
+        loaded_series = []
+
+        self.progress["value"] = 0
+        self.progress["maximum"] = len(folder_names)
+
+        for folder_name in folder_names:
+            self.status_var.set(f"Scanning dv/v folder: {folder_name}")
+
+            parsed = parse_pair_folder_name(folder_name)
+            if parsed is None:
+                print(f"Could not parse dv/v folder name: {folder_name}")
+                self.progress["value"] += 1
+                self.progress.update_idletasks()
+                continue
+
+            station1, station2, channel1, channel2 = parsed
+            pair_key = tuple(sorted((station1, station2)))
+
+            if pair_key not in selected_pair_keys:
+                self.progress["value"] += 1
+                self.progress.update_idletasks()
+                continue
+
+            pair_folder = os.path.join(dvv_root, folder_name)
+            csv_file = find_only_dvv_csv(pair_folder)
+
+            if csv_file is None:
+                print(f"No '_dvv.csv' file found in {pair_folder}")
+                self.progress["value"] += 1
+                self.progress.update_idletasks()
+                continue
+
+            try:
+                df = read_dvv_csv(csv_file)
+
+                loaded_series.append({
+                    "folder_name": folder_name,
+                    "pair_folder": pair_folder,
+                    "csv_file": csv_file,
+                    "station1": station1,
+                    "station2": station2,
+                    "channel1": channel1,
+                    "channel2": channel2,
+                    "df": df
+                })
+
+            except Exception as e:
+                print(f"Error reading {csv_file}: {e}")
+
+            self.progress["value"] += 1
+            self.progress.update_idletasks()
+
+        if not loaded_series:
+            messagebox.showwarning(
+                "SANBA",
+                "No valid dv/v series were loaded for the currently selected station pairs."
+            )
+            return
+
+        # --------------------------------------------------------------
+        # Build groups
+        # --------------------------------------------------------------
+        groups = {}
+
+        for entry in loaded_series:
+            st1 = entry["station1"]
+            st2 = entry["station2"]
+            ch1 = entry["channel1"]
+            ch2 = entry["channel2"]
+
+            stations_in_pair = sorted(set([st1, st2]))
+            channels_in_pair = sorted(set([ch1, ch2]))
+
+            if isolate_by_station and not isolate_by_channel:
+                for st in stations_in_pair:
+                    add_to_group(st, entry, groups)
+
+            elif isolate_by_channel and not isolate_by_station:
+                for ch in channels_in_pair:
+                    add_to_group(ch, entry, groups)
+
+            elif isolate_by_station and isolate_by_channel:
+                for st in stations_in_pair:
+                    for ch in channels_in_pair:
+                        add_to_group((st, ch), entry, groups)
+
+        if not groups:
+            messagebox.showwarning(
+                "SANBA",
+                "No groups were formed for plotting after applying the selected pair filter."
+            )
+            return
+
+        group_keys = sorted(groups.keys(), key=lambda x: str(x))
+
+        # --------------------------------------------------------------
+        # If compute_mean, add one extra axis for the global mean
+        # --------------------------------------------------------------
+        if compute_mean:
+            all_plot_keys = group_keys + ["__GLOBAL_MEAN__"]
+        else:
+            all_plot_keys = group_keys
+
+        nplots = len(all_plot_keys)
+        nrows, ncols = self._best_subplot_grid(nplots)
+
+        self.fig.clf()
+        self.fig.subplots_adjust(
+            left=0.06,
+            right=0.90,
+            top=0.93,
+            bottom=0.08,
+            wspace=0.35,
+            hspace=0.50
+        )
+
+        axes = self.fig.subplots(nrows, ncols, squeeze=False)
+        flat_axes = axes.flatten()
+
+        for i, plot_key in enumerate(all_plot_keys):
+            ax = flat_axes[i]
+
+            ax_ext = None
+            if plot_external and external_df is not None:
+                ax_ext = ax.twinx()
+                ax_ext.set_ylabel(external_opts["name"], fontsize=8)
+                ax_ext.tick_params(axis="y", labelsize=8)
+
+            # ----------------------------------------------------------
+            # Global mean axis
+            # ----------------------------------------------------------
+            if plot_key == "__GLOBAL_MEAN__":
+                mean_df = compute_group_mean(
+                    loaded_series,
+                    rule=resample_rule,
+                    min_count=min_count,
+                    interp_limit=2
+                )
+
+                if mean_df is not None and not mean_df.empty:
+                    ax.plot(
+                        mean_df["timestamp_local"],
+                        mean_df["mean_dvv"],
+                        color="k",
+                        #linewidth=1,
+                        label="General mean"
+                    )
+
+                if ax_ext is not None:
+                    if external_opts["plot_type"] == "line":
+                        ax_ext.plot(
+                            external_df["timestamp_local"],
+                            external_df["value"],
+                            color=external_opts["color"],
+                            label=external_opts["name"]
+                        )
+                    elif external_opts["plot_type"] == "scatter":
+                        ax_ext.scatter(
+                            external_df["timestamp_local"],
+                            external_df["value"],
+                            color=external_opts["color"],
+                            s=5,
+                            label=external_opts["name"]
+                        )
+                    elif external_opts["plot_type"] == "bar":
+                        ax_ext.bar(
+                            external_df["timestamp_local"],
+                            external_df["value"],
+                            width=1,
+                            color=external_opts["color"],
+                            alpha=0.7,
+                            label=external_opts["name"]
+                        )
+
+                ax.set_title("General mean of all dv/v series", fontsize=10)
+                ax.set_ylabel("dv/v (%)", fontsize=8)
+                ax.tick_params(axis="both", labelsize=8)
+                #ax.grid(True)
+                ax.spines["top"].set_visible(False)
+                ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m/%Y\n%H:%M"))
+
+                all_dates = pd.concat(
+                    [entry["df"]["timestamp_local"] for entry in loaded_series],
+                    axis=0
+                ).sort_values()
+
+                if not all_dates.empty:
+                    ax.set_xlim(all_dates.min(), all_dates.max())
+
+                handles, labels = ax.get_legend_handles_labels()
+                if ax_ext is not None:
+                    h2, l2 = ax_ext.get_legend_handles_labels()
+                    handles += h2
+                    labels += l2
+
+                if handles:
+                    ax.legend(handles, labels, loc="upper right", fontsize=7)
+
+                continue
+
+            # ----------------------------------------------------------
+            # Normal grouped axes
+            # ----------------------------------------------------------
+            gkey = plot_key
+            entries = groups[gkey]
+
+            for entry in entries:
+                df = entry["df"]
+                ax.plot(
+                    df["timestamp_local"],
+                    df["dvv_plot"],
+                    label=series_label(entry),
+                    alpha=0.85
+                )
+
+            if compute_mean and entries:
+                mean_df = compute_group_mean(
+                    entries,
+                    rule=resample_rule,
+                    min_count=min_count,
+                    interp_limit=2
+                )
+                if mean_df is not None and not mean_df.empty:
+                    ax.plot(
+                        mean_df["timestamp_local"],
+                        mean_df["mean_dvv"],
+                        color="k",
+                        #linewidth=1,
+                        label="Mean"
+                    )
+
+            if ax_ext is not None:
+                if external_opts["plot_type"] == "line":
+                    ax_ext.plot(
+                        external_df["timestamp_local"],
+                        external_df["value"],
+                        color=external_opts["color"],
+                        label=external_opts["name"]
+                    )
+                elif external_opts["plot_type"] == "scatter":
+                    ax_ext.scatter(
+                        external_df["timestamp_local"],
+                        external_df["value"],
+                        color=external_opts["color"],
+                        s=10,
+                        label=external_opts["name"]
+                    )
+                elif external_opts["plot_type"] == "bar":
+                    ax_ext.bar(
+                        external_df["timestamp_local"],
+                        external_df["value"],
+                        width=1,
+                        color=external_opts["color"],
+                        alpha=0.7,
+                        label=external_opts["name"]
+                    )
+
+            ax.set_title(group_title(gkey), fontsize=10)
+            ax.set_ylabel("dv/v (%)", fontsize=8)
+            ax.tick_params(axis="both", labelsize=8)
+            #ax.grid(True)
+            ax.spines["top"].set_visible(False)
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m/%Y\n%H:%M"))
+
+            group_dates = pd.concat(
+                [entry["df"]["timestamp_local"] for entry in entries],
+                axis=0
+            ).sort_values()
+
+            if not group_dates.empty:
+                ax.set_xlim(group_dates.min(), group_dates.max())
+
+            handles, labels = ax.get_legend_handles_labels()
+            if ax_ext is not None:
+                h2, l2 = ax_ext.get_legend_handles_labels()
+                handles += h2
+                labels += l2
+
+            if handles:
+                ax.legend(handles, labels, loc="upper right", fontsize=7)
+
+        # Hide unused axes
+        for j in range(nplots, len(flat_axes)):
+            flat_axes[j].set_visible(False)
+
+        '''# --------------------------------------------------------------
+        # Global title
+        # --------------------------------------------------------------
+        title_parts = ["Advanced dv/v plot"]
+        if isolate_by_station:
+            title_parts.append("by station")
+        if isolate_by_channel:
+            title_parts.append("by channel")
+        if compute_mean:
+            title_parts.append("with mean + general mean")
+
+        self.fig.suptitle(" | ".join(title_parts), fontsize=12)'''
+        self.fig.canvas.draw()
+
+        # --------------------------------------------------------------
+        # Save figure
+        # --------------------------------------------------------------
+        suffix_parts = []
+        if isolate_by_station:
+            suffix_parts.append("station")
+        if isolate_by_channel:
+            suffix_parts.append("channel")
+        if compute_mean:
+            suffix_parts.append("mean")
+            suffix_parts.append("generalmean")
+
+        out_png = os.path.join(
+            dvv_root,
+            f"dvv_advanced_{'_'.join(suffix_parts)}.png"
+        )
+
+        self.fig.savefig(out_png, dpi=300, bbox_inches="tight")
+
+        self.status_var.set(
+            f"Completed advanced dv/v plotting: {out_png}"
+        )
+
     def _ask_external_series_options(self):
         """
         Popup window to configure the external series:
@@ -3437,14 +4186,14 @@ class PSVM(ttk.Frame):
                     ax_ext.bar(
                         external_df["timestamp_local"],
                         external_df["value"],
-                        width=0.01,
+                        width=0.1,
                         color=external_opts["color"],
                         label=external_opts["name"],
                         alpha=0.7
                     )
 
             ax.set_ylabel("dv/v (%)")
-            ax.grid(True)
+            #ax.grid(True)
             ax.spines["top"].set_visible(False)
             ax.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m/%Y\n%H:%M"))
             ax.legend(loc="best", fontsize="small")
@@ -3458,10 +4207,10 @@ class PSVM(ttk.Frame):
             all_dates = pd.concat([item["df"]["timestamp_local"] for item in series_data], axis=0)
             ax.set_xlim(all_dates.min(), all_dates.max())
 
-            title = f"dv/v series | {self.mwcs_freq_min}-{self.mwcs_freq_max} Hz"
+            '''title = f"dv/v series | {self.mwcs_freq_min}-{self.mwcs_freq_max} Hz"
             if self.mwcs_reference == "following":
                 title += " | cumulative mode"
-            #ax.set_title(title)
+            ax.set_title(title)'''
 
             #self.fig.tight_layout()
             self.fig.canvas.draw()
